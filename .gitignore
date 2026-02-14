@@ -84,3 +84,9 @@ USER.md
 !.agent/workflows/
 local/
 package-lock.json
+docker-compose.override.yml
+# VPS-specific files to ignore
+*.bak
+*.bak-*
+test-websocket.mjs
+skills/news-orchestrator/
