@@ -58,3 +58,62 @@ vendor/
 !vendor/a2ui/renderers/
 !vendor/a2ui/renderers/lit/
 !vendor/a2ui/renderers/lit/**
+
+# Additional .dockerignore entries to reduce build context
+# Append these to the existing .dockerignore in the OpenClaw repo
+
+# VPS-specific files
+docker-compose.override.yml
+docker-compose.yml.bak
+docker-compose.yml.bak-*
+*.bak
+*.bak-*
+*.archived
+
+# Environment and secrets (NEVER include in build context)
+.env
+.env.*
+
+# Test files
+test/
+test-*.mjs
+test-*.js
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Documentation (not needed at runtime)
+docs/*
+!docs/reference/
+*.md
+!docs/reference/templates/*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Deployment configs
+fly.toml
+fly.private.toml
+render.yaml
+docker-setup.sh
+Dockerfile.original
+Dockerfile.sandbox
+Dockerfile.sandbox-browser
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git hooks (not needed in image)
+git-hooks/
+
+# Runtime templates (required by OpenClaw gateway)
+!docs/reference/
+!docs/reference/templates/
+!docs/reference/templates/**

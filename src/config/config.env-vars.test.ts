@@ -1,8 +1,52 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveStateDir } from "./paths.js";
 import { withEnvOverride, withTempHome } from "./test-helpers.js";
+
+// Mock loadDotEnv to skip CWD .env loading (prevents real API key contamination)
+// but still load state-dir .env so ${VAR} substitution tests work.
+vi.mock("../infra/dotenv.js", async () => {
+  const dotenvPkg = await import("dotenv");
+  const nodePath = await import("node:path");
+  const nodeFs = await import("node:fs");
+
+  return {
+    loadDotEnv: vi.fn((_opts?: { quiet?: boolean }) => {
+      // Skip dotenv.config() for CWD — that would load the project's real .env.
+      // Only load the state-dir .env (second half of the real implementation).
+      const stateDir =
+        process.env.OPENCLAW_STATE_DIR?.trim() ||
+        nodePath.join(process.env.HOME || "/tmp", ".openclaw");
+      const globalEnvPath = nodePath.join(stateDir, ".env");
+      if (nodeFs.existsSync(globalEnvPath)) {
+        dotenvPkg.config({ path: globalEnvPath, override: false });
+      }
+    }),
+  };
+});
+
+// Ensure env vars that may have been loaded by vitest or setup are cleared.
+const envKeysToIsolate = ["OPENROUTER_API_KEY", "BRAVE_API_KEY"];
+const savedEnv: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  for (const key of envKeysToIsolate) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+  vi.resetModules();
+});
+
+afterEach(() => {
+  for (const key of envKeysToIsolate) {
+    if (savedEnv[key] !== undefined) {
+      process.env[key] = savedEnv[key];
+    } else {
+      delete process.env[key];
+    }
+  }
+});
 
 describe("config env vars", () => {
   it("applies env vars from env block when missing", async () => {

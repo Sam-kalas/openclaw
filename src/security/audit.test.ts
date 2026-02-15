@@ -1274,7 +1274,10 @@ describe("security audit", () => {
 
       expect(res.findings).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ checkId: "plugins.extensions_no_allowlist", severity: "warn" }),
+          expect.objectContaining({
+            checkId: "plugins.extensions_no_allowlist",
+            severity: "critical",
+          }),
         ]),
       );
     } finally {
