@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
   normalizeInputProvenance,
@@ -149,38 +150,39 @@ describe("hasInterSessionUserProvenance", () => {
 
 describe("applyInputProvenanceToUserMessage", () => {
   it("returns message unchanged when provenance is undefined", () => {
-    const msg = { role: "user", content: "hi" } as any;
+    const msg = { role: "user", content: "hi" } as unknown as AgentMessage;
     expect(applyInputProvenanceToUserMessage(msg, undefined)).toBe(msg);
   });
 
   it("returns message unchanged for non-user role", () => {
-    const msg = { role: "assistant", content: "hi" } as any;
+    const msg = { role: "assistant", content: "hi" } as unknown as AgentMessage;
     const provenance = { kind: "external_user" as const };
     expect(applyInputProvenanceToUserMessage(msg, provenance)).toBe(msg);
   });
 
   it("applies provenance to user message", () => {
-    const msg = { role: "user", content: "hello" } as any;
+    const msg = { role: "user", content: "hello" } as unknown as AgentMessage;
     const provenance = { kind: "inter_session" as const, sourceSessionKey: "key1" };
-    const result = applyInputProvenanceToUserMessage(msg, provenance) as any;
-    expect(result.provenance).toEqual(provenance);
-    expect(result.content).toBe("hello");
-    expect(result.role).toBe("user");
+    const result = applyInputProvenanceToUserMessage(msg, provenance);
+    const resultRecord = result as unknown as Record<string, unknown>;
+    expect(resultRecord.provenance).toEqual(provenance);
+    expect(resultRecord.content).toBe("hello");
+    expect(resultRecord.role).toBe("user");
   });
 
   it("does not overwrite existing provenance", () => {
     const existing = { kind: "external_user" as const };
-    const msg = { role: "user", content: "hello", provenance: existing } as any;
+    const msg = { role: "user", content: "hello", provenance: existing } as unknown as AgentMessage;
     const newProvenance = { kind: "inter_session" as const };
     const result = applyInputProvenanceToUserMessage(msg, newProvenance);
-    expect((result as any).provenance).toEqual(existing);
+    expect((result as unknown as Record<string, unknown>).provenance).toEqual(existing);
   });
 
   it("returns a new object (does not mutate original)", () => {
-    const msg = { role: "user", content: "hello" } as any;
+    const msg = { role: "user", content: "hello" } as unknown as AgentMessage;
     const provenance = { kind: "external_user" as const };
     const result = applyInputProvenanceToUserMessage(msg, provenance);
     expect(result).not.toBe(msg);
-    expect(msg.provenance).toBeUndefined();
+    expect((msg as unknown as Record<string, unknown>).provenance).toBeUndefined();
   });
 });

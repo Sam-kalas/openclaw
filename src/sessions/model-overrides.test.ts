@@ -95,7 +95,9 @@ describe("applyModelOverrideToSessionEntry", () => {
       profileOverride: "new-profile",
     });
     expect(result.updated).toBe(true);
-    expect((entry as any).authProfileOverrideCompactionCount).toBeUndefined();
+    expect(
+      (entry as unknown as Record<string, unknown>).authProfileOverrideCompactionCount,
+    ).toBeUndefined();
   });
 
   it("sets updatedAt timestamp when changes are made", () => {
