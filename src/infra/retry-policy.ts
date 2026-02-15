@@ -1,4 +1,5 @@
 import { RateLimitError } from "@buape/carbon";
+import { logWarn } from "../logger.js";
 import { formatErrorMessage } from "./errors.js";
 import { type RetryConfig, resolveRetryConfig, retryAsync } from "./retry.js";
 
@@ -57,15 +58,13 @@ export function createDiscordRetryRunner(params: {
       label,
       shouldRetry: (err) => err instanceof RateLimitError,
       retryAfterMs: (err) => (err instanceof RateLimitError ? err.retryAfter * 1000 : undefined),
-      onRetry: params.verbose
-        ? (info) => {
-            const labelText = info.label ?? "request";
-            const maxRetries = Math.max(1, info.maxAttempts - 1);
-            console.warn(
-              `discord ${labelText} rate limited, retry ${info.attempt}/${maxRetries} in ${info.delayMs}ms`,
-            );
-          }
-        : undefined,
+      onRetry: (info) => {
+        const labelText = info.label ?? "request";
+        const maxRetries = Math.max(1, info.maxAttempts - 1);
+        logWarn(
+          `discord: ${labelText} rate limited, retry ${info.attempt}/${maxRetries} in ${info.delayMs}ms`,
+        );
+      },
     });
 }
 
@@ -89,13 +88,11 @@ export function createTelegramRetryRunner(params: {
       label,
       shouldRetry,
       retryAfterMs: getTelegramRetryAfterMs,
-      onRetry: params.verbose
-        ? (info) => {
-            const maxRetries = Math.max(1, info.maxAttempts - 1);
-            console.warn(
-              `telegram send retry ${info.attempt}/${maxRetries} for ${info.label ?? label ?? "request"} in ${info.delayMs}ms: ${formatErrorMessage(info.err)}`,
-            );
-          }
-        : undefined,
+      onRetry: (info) => {
+        const maxRetries = Math.max(1, info.maxAttempts - 1);
+        logWarn(
+          `telegram: send retry ${info.attempt}/${maxRetries} for ${info.label ?? label ?? "request"} in ${info.delayMs}ms: ${formatErrorMessage(info.err)}`,
+        );
+      },
     });
 }

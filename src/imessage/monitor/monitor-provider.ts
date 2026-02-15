@@ -35,6 +35,7 @@ import {
 import { readSessionUpdatedAt, resolveStorePath } from "../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../globals.js";
 import { waitForTransportReady } from "../../infra/transport-ready.js";
+import { logWarn } from "../../logger.js";
 import { mediaKindFromMime } from "../../media/constants.js";
 import { buildPairingReply } from "../../pairing/pairing-messages.js";
 import {
@@ -468,7 +469,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
     const commandAuthorized = isGroup ? commandGate.commandAuthorized : dmAuthorized;
     if (isGroup && commandGate.shouldBlock) {
       logInboundDrop({
-        log: logVerbose,
+        log: logWarn,
         channel: "imessage",
         reason: "control command (unauthorized)",
         target: sender,

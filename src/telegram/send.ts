@@ -13,6 +13,7 @@ import { recordChannelActivity } from "../infra/channel-activity.js";
 import { isDiagnosticFlagEnabled } from "../infra/diagnostic-flags.js";
 import { formatErrorMessage, formatUncaughtError } from "../infra/errors.js";
 import { createTelegramRetryRunner } from "../infra/retry-policy.js";
+import { logWarn } from "../logger.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { mediaKindFromMime } from "../media/constants.js";
@@ -311,11 +312,9 @@ export async function sendMessageTelegram(
       if (!hasMessageThreadIdParam(params) || !isTelegramThreadNotFoundError(err)) {
         throw err;
       }
-      if (opts.verbose) {
-        console.warn(
-          `telegram ${label} failed with message_thread_id, retrying without thread: ${formatErrorMessage(err)}`,
-        );
-      }
+      logWarn(
+        `telegram: ${label} failed with message_thread_id, retrying without thread: ${formatErrorMessage(err)}`,
+      );
       const retriedParams = removeMessageThreadIdParam(params);
       return await attempt(retriedParams, `${label}-threadless`);
     }
@@ -359,9 +358,7 @@ export async function sendMessageTelegram(
         // When that happens, fall back to plain text so the message still delivers.
         const errText = formatErrorMessage(err);
         if (PARSE_ERR_RE.test(errText)) {
-          if (opts.verbose) {
-            console.warn(`telegram HTML parse failed, retrying as plain text: ${errText}`);
-          }
+          logWarn(`telegram: HTML parse failed, retrying as plain text: ${errText}`);
           const fallback = fallbackText ?? rawText;
           const plainParams = hasBaseParams
             ? (baseParams as Parameters<typeof api.sendMessage>[2])
@@ -885,11 +882,9 @@ export async function sendStickerTelegram(
       if (!hasMessageThreadIdParam(params) || !isTelegramThreadNotFoundError(err)) {
         throw err;
       }
-      if (opts.verbose) {
-        console.warn(
-          `telegram ${label} failed with message_thread_id, retrying without thread: ${formatErrorMessage(err)}`,
-        );
-      }
+      logWarn(
+        `telegram: ${label} failed with message_thread_id, retrying without thread: ${formatErrorMessage(err)}`,
+      );
       const retriedParams = removeMessageThreadIdParam(params) as
         | Record<string, number>
         | undefined;

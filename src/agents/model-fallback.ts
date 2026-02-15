@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { FailoverReason } from "./pi-embedded-helpers.js";
+import { logWarn } from "../logger.js";
 import {
   ensureAuthProfileStore,
   isProfileInCooldown,
@@ -257,6 +258,9 @@ export async function runWithModelFallback<T>(params: {
           error: `Provider ${candidate.provider} is in cooldown (all profiles unavailable)`,
           reason: "rate_limit",
         });
+        logWarn(
+          `model-fallback: provider ${candidate.provider} skipped (all auth profiles in cooldown)`,
+        );
         continue;
       }
     }
