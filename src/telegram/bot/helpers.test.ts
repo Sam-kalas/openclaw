@@ -1,275 +1,268 @@
-import type { Message } from "@grammyjs/types";
 import { describe, expect, it } from "vitest";
 import {
-  resolveTelegramForumThreadId,
-  resolveTelegramThreadSpec,
   buildTelegramThreadParams,
   buildTypingThreadParams,
-  resolveTelegramStreamMode,
-  buildTelegramGroupPeerId,
-  buildTelegramGroupFrom,
-  buildTelegramParentPeer,
-  buildSenderName,
-  buildSenderLabel,
-  buildGroupLabel,
-  hasBotMention,
   expandTextLinks,
-  resolveTelegramReplyId,
+  normalizeForwardedContext,
+  resolveTelegramForumThreadId,
 } from "./helpers.js";
 
 describe("resolveTelegramForumThreadId", () => {
-  it("returns undefined for non-forum groups", () => {
+  it("returns undefined for non-forum groups even with messageThreadId", () => {
+    // Reply threads in regular groups should not create separate sessions
     expect(resolveTelegramForumThreadId({ isForum: false, messageThreadId: 42 })).toBeUndefined();
   });
 
-  it("returns general topic ID for forum without thread", () => {
-    expect(resolveTelegramForumThreadId({ isForum: true })).toBe(1);
+  it("returns undefined for non-forum groups without messageThreadId", () => {
+    expect(
+      resolveTelegramForumThreadId({ isForum: false, messageThreadId: undefined }),
+    ).toBeUndefined();
+    expect(
+      resolveTelegramForumThreadId({ isForum: undefined, messageThreadId: 99 }),
+    ).toBeUndefined();
   });
 
-  it("returns thread ID for forum with thread", () => {
+  it("returns General topic (1) for forum groups without messageThreadId", () => {
+    expect(resolveTelegramForumThreadId({ isForum: true, messageThreadId: undefined })).toBe(1);
+    expect(resolveTelegramForumThreadId({ isForum: true, messageThreadId: null })).toBe(1);
+  });
+
+  it("returns the topic id for forum groups with messageThreadId", () => {
     expect(resolveTelegramForumThreadId({ isForum: true, messageThreadId: 99 })).toBe(99);
   });
 });
 
-describe("resolveTelegramThreadSpec", () => {
-  it("returns forum scope for forum groups", () => {
-    const spec = resolveTelegramThreadSpec({ isGroup: true, isForum: true, messageThreadId: 5 });
-    expect(spec.scope).toBe("forum");
-    expect(spec.id).toBe(5);
-  });
-
-  it("returns none scope for non-forum groups", () => {
-    const spec = resolveTelegramThreadSpec({ isGroup: true, isForum: false, messageThreadId: 5 });
-    expect(spec.scope).toBe("none");
-    expect(spec.id).toBeUndefined();
-  });
-
-  it("returns dm scope for DMs without thread", () => {
-    const spec = resolveTelegramThreadSpec({ isGroup: false });
-    expect(spec.scope).toBe("dm");
-    expect(spec.id).toBeUndefined();
-  });
-
-  it("returns dm scope with threadId for DM topics", () => {
-    const spec = resolveTelegramThreadSpec({ isGroup: false, messageThreadId: 7 });
-    expect(spec.scope).toBe("dm");
-    expect(spec.id).toBe(7);
-  });
-});
-
 describe("buildTelegramThreadParams", () => {
-  it("returns undefined for no thread", () => {
-    expect(buildTelegramThreadParams(null)).toBeUndefined();
-    expect(buildTelegramThreadParams(undefined)).toBeUndefined();
-  });
-
-  it("returns undefined for thread without id", () => {
-    expect(buildTelegramThreadParams({ scope: "dm" })).toBeUndefined();
-  });
-
-  it("returns undefined for general forum topic (id=1)", () => {
+  it("omits General topic thread id for message sends", () => {
     expect(buildTelegramThreadParams({ id: 1, scope: "forum" })).toBeUndefined();
   });
 
-  it("returns message_thread_id for non-general forum topic", () => {
-    expect(buildTelegramThreadParams({ id: 42, scope: "forum" })).toEqual({
-      message_thread_id: 42,
+  it("includes non-General topic thread ids", () => {
+    expect(buildTelegramThreadParams({ id: 99, scope: "forum" })).toEqual({
+      message_thread_id: 99,
     });
   });
 
-  it("returns message_thread_id for DM topic", () => {
-    expect(buildTelegramThreadParams({ id: 7, scope: "dm" })).toEqual({
-      message_thread_id: 7,
+  it("skips thread id for dm threads (DMs don't have threads)", () => {
+    expect(buildTelegramThreadParams({ id: 1, scope: "dm" })).toBeUndefined();
+    expect(buildTelegramThreadParams({ id: 2, scope: "dm" })).toBeUndefined();
+  });
+
+  it("normalizes and skips thread id for dm threads even with edge values", () => {
+    expect(buildTelegramThreadParams({ id: 0, scope: "dm" })).toBeUndefined();
+    expect(buildTelegramThreadParams({ id: -1, scope: "dm" })).toBeUndefined();
+    expect(buildTelegramThreadParams({ id: 1.9, scope: "dm" })).toBeUndefined();
+  });
+
+  it("handles thread id 0 for non-dm scopes", () => {
+    // id=0 should be included for forum and none scopes (not falsy)
+    expect(buildTelegramThreadParams({ id: 0, scope: "forum" })).toEqual({
+      message_thread_id: 0,
+    });
+    expect(buildTelegramThreadParams({ id: 0, scope: "none" })).toEqual({
+      message_thread_id: 0,
+    });
+  });
+
+  it("normalizes thread ids to integers", () => {
+    expect(buildTelegramThreadParams({ id: 42.9, scope: "forum" })).toEqual({
+      message_thread_id: 42,
     });
   });
 });
 
 describe("buildTypingThreadParams", () => {
-  it("returns undefined for no thread", () => {
+  it("returns undefined when no thread id is provided", () => {
     expect(buildTypingThreadParams(undefined)).toBeUndefined();
   });
 
-  it("returns message_thread_id including for general topic", () => {
+  it("includes General topic thread id for typing indicators", () => {
     expect(buildTypingThreadParams(1)).toEqual({ message_thread_id: 1 });
-    expect(buildTypingThreadParams(42)).toEqual({ message_thread_id: 42 });
+  });
+
+  it("normalizes thread ids to integers", () => {
+    expect(buildTypingThreadParams(42.9)).toEqual({ message_thread_id: 42 });
   });
 });
 
-describe("resolveTelegramStreamMode", () => {
-  it("defaults to partial", () => {
-    expect(resolveTelegramStreamMode()).toBe("partial");
-    expect(resolveTelegramStreamMode({})).toBe("partial");
+describe("normalizeForwardedContext", () => {
+  it("handles forward_origin users", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: {
+        type: "user",
+        sender_user: { first_name: "Ada", last_name: "Lovelace", username: "ada", id: 42 },
+        date: 123,
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.from).toBe("Ada Lovelace (@ada)");
+    expect(ctx?.fromType).toBe("user");
+    expect(ctx?.fromId).toBe("42");
+    expect(ctx?.fromUsername).toBe("ada");
+    expect(ctx?.fromTitle).toBe("Ada Lovelace");
+    expect(ctx?.date).toBe(123);
   });
 
-  it("returns valid modes", () => {
-    expect(resolveTelegramStreamMode({ streamMode: "off" })).toBe("off");
-    expect(resolveTelegramStreamMode({ streamMode: "block" })).toBe("block");
-    expect(resolveTelegramStreamMode({ streamMode: "partial" })).toBe("partial");
+  it("handles hidden forward_origin names", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: { type: "hidden_user", sender_user_name: "Hidden Name", date: 456 },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.from).toBe("Hidden Name");
+    expect(ctx?.fromType).toBe("hidden_user");
+    expect(ctx?.fromTitle).toBe("Hidden Name");
+    expect(ctx?.date).toBe(456);
   });
 
-  it("handles case-insensitive input", () => {
-    expect(resolveTelegramStreamMode({ streamMode: "OFF" as unknown as "off" })).toBe("off");
+  it("handles forward_origin channel with author_signature and message_id", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: {
+        type: "channel",
+        chat: {
+          title: "Tech News",
+          username: "technews",
+          id: -1001234,
+          type: "channel",
+        },
+        date: 500,
+        author_signature: "Editor",
+        message_id: 42,
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.from).toBe("Tech News (Editor)");
+    expect(ctx?.fromType).toBe("channel");
+    expect(ctx?.fromId).toBe("-1001234");
+    expect(ctx?.fromUsername).toBe("technews");
+    expect(ctx?.fromTitle).toBe("Tech News");
+    expect(ctx?.fromSignature).toBe("Editor");
+    expect(ctx?.fromChatType).toBe("channel");
+    expect(ctx?.fromMessageId).toBe(42);
+    expect(ctx?.date).toBe(500);
   });
 
-  it("returns partial for invalid input", () => {
-    expect(resolveTelegramStreamMode({ streamMode: "invalid" as unknown as "off" })).toBe(
-      "partial",
-    );
-  });
-});
-
-describe("buildTelegramGroupPeerId", () => {
-  it("returns chatId as string without topic", () => {
-    expect(buildTelegramGroupPeerId(-1001234567890)).toBe("-1001234567890");
-  });
-
-  it("appends topic suffix", () => {
-    expect(buildTelegramGroupPeerId(-1001234567890, 42)).toBe("-1001234567890:topic:42");
-  });
-});
-
-describe("buildTelegramGroupFrom", () => {
-  it("builds from without topic", () => {
-    expect(buildTelegramGroupFrom(123)).toBe("telegram:group:123");
-  });
-
-  it("builds from with topic", () => {
-    expect(buildTelegramGroupFrom(123, 5)).toBe("telegram:group:123:topic:5");
-  });
-});
-
-describe("buildTelegramParentPeer", () => {
-  it("returns undefined for non-group", () => {
-    expect(buildTelegramParentPeer({ isGroup: false, chatId: 123 })).toBeUndefined();
+  it("handles forward_origin chat with sender_chat and author_signature", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: {
+        type: "chat",
+        sender_chat: {
+          title: "Discussion Group",
+          id: -1005678,
+          type: "supergroup",
+        },
+        date: 600,
+        author_signature: "Admin",
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.from).toBe("Discussion Group (Admin)");
+    expect(ctx?.fromType).toBe("chat");
+    expect(ctx?.fromId).toBe("-1005678");
+    expect(ctx?.fromTitle).toBe("Discussion Group");
+    expect(ctx?.fromSignature).toBe("Admin");
+    expect(ctx?.fromChatType).toBe("supergroup");
+    expect(ctx?.date).toBe(600);
   });
 
-  it("returns undefined for group without topic", () => {
-    expect(buildTelegramParentPeer({ isGroup: true, chatId: 123 })).toBeUndefined();
+  it("uses author_signature from forward_origin", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: {
+        type: "channel",
+        chat: { title: "My Channel", id: -100999, type: "channel" },
+        date: 700,
+        author_signature: "New Sig",
+        message_id: 1,
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.fromSignature).toBe("New Sig");
+    expect(ctx?.from).toBe("My Channel (New Sig)");
   });
 
-  it("returns parent peer for group with topic", () => {
-    expect(
-      buildTelegramParentPeer({ isGroup: true, resolvedThreadId: 5, chatId: -100123 }),
-    ).toEqual({ kind: "group", id: "-100123" });
-  });
-});
-
-describe("buildSenderName", () => {
-  it("returns combined first+last name", () => {
-    const msg = { from: { first_name: "John", last_name: "Doe" } } as Message;
-    expect(buildSenderName(msg)).toBe("John Doe");
-  });
-
-  it("returns first name only", () => {
-    const msg = { from: { first_name: "Alice" } } as Message;
-    expect(buildSenderName(msg)).toBe("Alice");
+  it("returns undefined signature when author_signature is blank", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: {
+        type: "channel",
+        chat: { title: "Updates", id: -100333, type: "channel" },
+        date: 860,
+        author_signature: "   ",
+        message_id: 1,
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.fromSignature).toBeUndefined();
+    expect(ctx?.from).toBe("Updates");
   });
 
-  it("falls back to username", () => {
-    const msg = { from: { username: "coolbot" } } as Message;
-    expect(buildSenderName(msg)).toBe("coolbot");
-  });
-
-  it("returns undefined when no from", () => {
-    const msg = {} as Message;
-    expect(buildSenderName(msg)).toBeUndefined();
-  });
-});
-
-describe("buildSenderLabel", () => {
-  it("builds label with name and username and id", () => {
-    const msg = {
-      from: { first_name: "John", username: "johnd", id: 123 },
-    } as Message;
-    expect(buildSenderLabel(msg, 123)).toBe("John (@johnd) id:123");
-  });
-
-  it("falls back to senderId", () => {
-    const msg = {} as Message;
-    expect(buildSenderLabel(msg, 456)).toBe("id:456");
-  });
-
-  it("returns id:unknown when no info", () => {
-    const msg = {} as Message;
-    expect(buildSenderLabel(msg)).toBe("id:unknown");
-  });
-});
-
-describe("buildGroupLabel", () => {
-  it("uses chat title when available", () => {
-    const msg = { chat: { title: "My Group" } } as Message;
-    expect(buildGroupLabel(msg, -100123)).toBe("My Group id:-100123");
-  });
-
-  it("falls back to group prefix", () => {
-    const msg = { chat: {} } as Message;
-    expect(buildGroupLabel(msg, -100123)).toBe("group:-100123");
-  });
-
-  it("appends topic suffix", () => {
-    const msg = { chat: { title: "Group" } } as Message;
-    expect(buildGroupLabel(msg, -100, 5)).toBe("Group id:-100 topic:5");
+  it("handles forward_origin channel without author_signature", () => {
+    const ctx = normalizeForwardedContext({
+      forward_origin: {
+        type: "channel",
+        chat: { title: "News", id: -100111, type: "channel" },
+        date: 900,
+        message_id: 1,
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+    expect(ctx).not.toBeNull();
+    expect(ctx?.from).toBe("News");
+    expect(ctx?.fromSignature).toBeUndefined();
+    expect(ctx?.fromChatType).toBe("channel");
   });
 });
 
 describe("expandTextLinks", () => {
-  it("returns text unchanged without entities", () => {
-    expect(expandTextLinks("hello world", [])).toBe("hello world");
+  it("returns text unchanged when no entities are provided", () => {
+    expect(expandTextLinks("Hello world")).toBe("Hello world");
+    expect(expandTextLinks("Hello world", null)).toBe("Hello world");
+    expect(expandTextLinks("Hello world", [])).toBe("Hello world");
   });
 
-  it("returns text unchanged without text_link entities", () => {
-    expect(expandTextLinks("hello @world", [{ type: "mention", offset: 6, length: 6 }])).toBe(
-      "hello @world",
+  it("returns text unchanged when there are no text_link entities", () => {
+    const entities = [
+      { type: "mention", offset: 0, length: 5 },
+      { type: "bold", offset: 6, length: 5 },
+    ];
+    expect(expandTextLinks("@user hello", entities)).toBe("@user hello");
+  });
+
+  it("expands a single text_link entity", () => {
+    const text = "Check this link for details";
+    const entities = [{ type: "text_link", offset: 11, length: 4, url: "https://example.com" }];
+    expect(expandTextLinks(text, entities)).toBe(
+      "Check this [link](https://example.com) for details",
     );
   });
 
-  it("expands text_link to markdown", () => {
-    const result = expandTextLinks("Click here for info", [
-      { type: "text_link", offset: 6, length: 4, url: "https://example.com" },
-    ]);
-    expect(result).toBe("Click [here](https://example.com) for info");
+  it("expands multiple text_link entities", () => {
+    const text = "Visit Google or GitHub for more";
+    const entities = [
+      { type: "text_link", offset: 6, length: 6, url: "https://google.com" },
+      { type: "text_link", offset: 16, length: 6, url: "https://github.com" },
+    ];
+    expect(expandTextLinks(text, entities)).toBe(
+      "Visit [Google](https://google.com) or [GitHub](https://github.com) for more",
+    );
   });
 
-  it("handles multiple text_links", () => {
-    const result = expandTextLinks("A and B", [
-      { type: "text_link", offset: 0, length: 1, url: "https://a.com" },
-      { type: "text_link", offset: 6, length: 1, url: "https://b.com" },
-    ]);
-    expect(result).toBe("[A](https://a.com) and [B](https://b.com)");
-  });
-});
-
-describe("resolveTelegramReplyId", () => {
-  it("returns undefined for empty", () => {
-    expect(resolveTelegramReplyId(undefined)).toBeUndefined();
-    expect(resolveTelegramReplyId("")).toBeUndefined();
+  it("handles adjacent text_link entities", () => {
+    const text = "AB";
+    const entities = [
+      { type: "text_link", offset: 0, length: 1, url: "https://a.example" },
+      { type: "text_link", offset: 1, length: 1, url: "https://b.example" },
+    ];
+    expect(expandTextLinks(text, entities)).toBe("[A](https://a.example)[B](https://b.example)");
   });
 
-  it("parses numeric string", () => {
-    expect(resolveTelegramReplyId("42")).toBe(42);
-  });
-
-  it("returns undefined for non-numeric", () => {
-    expect(resolveTelegramReplyId("abc")).toBeUndefined();
-  });
-});
-
-describe("hasBotMention", () => {
-  it("detects @ mention in text", () => {
-    const msg = { text: "Hello @mybot how are you", entities: [] } as unknown as Message;
-    expect(hasBotMention(msg, "mybot")).toBe(true);
-  });
-
-  it("detects mention entity", () => {
-    const msg = {
-      text: "Hello @MyBot",
-      entities: [{ type: "mention", offset: 6, length: 6 }],
-    } as unknown as Message;
-    expect(hasBotMention(msg, "mybot")).toBe(true);
-  });
-
-  it("returns false when no mention", () => {
-    const msg = { text: "Hello world", entities: [] } as unknown as Message;
-    expect(hasBotMention(msg, "mybot")).toBe(false);
+  it("preserves offsets from the original string", () => {
+    const text = " Hello world";
+    const entities = [{ type: "text_link", offset: 1, length: 5, url: "https://example.com" }];
+    expect(expandTextLinks(text, entities)).toBe(" [Hello](https://example.com) world");
   });
 });
