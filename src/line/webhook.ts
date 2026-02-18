@@ -2,7 +2,6 @@ import type { WebhookRequestBody } from "@line/bot-sdk";
 import type { Request, Response, NextFunction } from "express";
 import type { RuntimeEnv } from "../runtime.js";
 import { logVerbose, danger } from "../globals.js";
-import { logWarn } from "../logger.js";
 import { validateLineSignature } from "./signature.js";
 import { isLineWebhookVerificationRequest, parseLineWebhookBody } from "./webhook-utils.js";
 
@@ -62,7 +61,7 @@ export function createLineWebhookMiddleware(
       }
 
       if (!validateLineSignature(rawBody, signature, channelSecret)) {
-        logWarn("line: webhook signature validation failed");
+        logVerbose("line: webhook signature validation failed");
         res.status(401).json({ error: "Invalid signature" });
         return;
       }

@@ -1,110 +1,61 @@
-# =============================================================================
-# Multi-stage build for OpenClaw Gateway — Cache-Optimized
-# =============================================================================
-# Improvements over original:
-#   1. BuildKit cache mounts for pnpm store (survives rebuilds)
-#   2. BuildKit cache mounts for apt (runtime stage)
-#   3. Multi-stage build with slim runtime image (node:22-bookworm-slim)
-#   4. Consolidated runtime COPY into fewer layers
-#   5. Enhanced .dockerignore recommendations (see bottom of file)
-#
-# Build with:
-#   DOCKER_BUILDKIT=1 docker build \
-#     --build-arg OPENCLAW_DOCKER_APT_PACKAGES=ffmpeg \
-#     -t openclaw:local-clean .
-# =============================================================================
-
-# ---------------------------------------------------------------------------
-# Stage 1: Builder — compile native modules + build application
-# ---------------------------------------------------------------------------
-FROM node:22-bookworm AS builder
+FROM node:22-bookworm
 
 # Install Bun (required for build scripts)
-# Cache the Bun install to avoid re-downloading on every build
-RUN --mount=type=cache,target=/root/.bun-install-cache \
-    curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
 RUN corepack enable
 
 WORKDIR /app
 
-# --- Layer 1: Dependency manifests (changes rarely) ---
-# Copy ONLY files needed for `pnpm install` — changes to source won't bust this cache
+ARG OPENCLAW_DOCKER_APT_PACKAGES=""
+RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    fi
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json
 COPY patches ./patches
 COPY scripts ./scripts
 
-# --- Layer 2: Install ALL dependencies (cached by pnpm store mount) ---
-# --mount=type=cache persists the pnpm store across builds, so only new/changed
-# packages are downloaded. This is the biggest time saver (~60-90% faster rebuilds).
-RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
-# --- Layer 3: Copy ALL source (changes frequently) ---
-# Uses COPY . . to capture all needed files (tsconfigs, vendor/a2ui, apps/shared, etc.)
-# .dockerignore keeps the build context lean by excluding node_modules, .git, media, etc.
+# Optionally install Chromium and Xvfb for browser automation.
+# Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
+# Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
+# Must run after pnpm install so playwright-core is available in node_modules.
+ARG OPENCLAW_INSTALL_BROWSER=""
+RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
+      node /app/node_modules/playwright-core/cli.js install --with-deps chromium && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    fi
+
 COPY . .
-
-# --- Layer 4: Build main application + UI ---
 RUN pnpm build
+# Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:build
 
-# --- Layer 6: Prune to production dependencies ---
-RUN CI=true pnpm install --prod --ignore-scripts \
-    && rm -rf /root/.bun \
-    && rm -rf /app/src /app/ui/src /app/ui/vite.config.ts \
-    && rm -rf /app/.git /app/.github /app/docs \
-    # Remove GPU-specific llama-cpp binaries (not needed for API-only gateway)
-    && rm -rf node_modules/.pnpm/@node-llama-cpp+linux-x64-cuda-ext* \
-              node_modules/.pnpm/@node-llama-cpp+linux-x64-cuda@* \
-              node_modules/.pnpm/@node-llama-cpp+linux-x64-vulkan* \
-    # Remove musl variants (we run on glibc/Debian)
-    && rm -rf node_modules/.pnpm/@napi-rs+canvas-linux-x64-musl* \
-              node_modules/.pnpm/@rolldown+binding-linux-x64-musl* \
-              node_modules/.pnpm/@img+sharp-libvips-linuxmusl-x64*
-
-# ---------------------------------------------------------------------------
-# Stage 2: Runtime — minimal image with only production files
-# ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim
-
-RUN corepack enable
-
-WORKDIR /app
-
-# Install runtime system packages (ffmpeg for TTS voice conversion)
-# Cache apt lists to speed up rebuilds when OPENCLAW_DOCKER_APT_PACKAGES changes
-ARG OPENCLAW_DOCKER_APT_PACKAGES=""
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
-      apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES; \
-    fi
-
-# Copy built application from builder (--chown avoids the 1.7GB chown layer)
-# Consolidated into fewer COPY instructions to reduce layer count
-COPY --from=builder --chown=node:node /app/dist ./dist
-COPY --from=builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=builder --chown=node:node /app/openclaw.mjs ./
-COPY --from=builder --chown=node:node /app/package.json ./
-COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml ./
-COPY --from=builder --chown=node:node /app/.npmrc ./
-COPY --from=builder --chown=node:node /app/patches ./patches
-COPY --from=builder --chown=node:node /app/skills ./skills
-COPY --from=builder --chown=node:node /app/extensions ./extensions
-COPY --from=builder --chown=node:node /app/packages ./packages
-COPY --from=builder --chown=node:node /app/pnpm-lock.yaml ./
-# UI package.json needed for pnpm workspace resolution
-COPY --from=builder --chown=node:node /app/ui/package.json ./ui/package.json
-COPY --chown=node:node docs/reference/templates ./docs/reference/templates
-
 ENV NODE_ENV=production
 
+# Allow non-root user to write temp files during runtime/tests.
+RUN chown -R node:node /app
+
 # Security hardening: Run as non-root user
+# The node:22-bookworm image includes a 'node' user (uid 1000)
+# This reduces the attack surface by preventing container escape via root privileges
 USER node
 
+# Start gateway server with default config.
+# Binds to loopback (127.0.0.1) by default for security.
+#
+# For container platforms requiring external health checks:
+#   1. Set OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD env var
+#   2. Override CMD: ["node","openclaw.mjs","gateway","--allow-unconfigured","--bind","lan"]
 CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
