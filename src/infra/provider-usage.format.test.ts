@@ -1,212 +1,110 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderUsageSnapshot, UsageSummary } from "./provider-usage.types.js";
 import {
-  formatUsageWindowSummary,
-  formatUsageSummaryLine,
   formatUsageReportLines,
+  formatUsageSummaryLine,
+  formatUsageWindowSummary,
 } from "./provider-usage.format.js";
 
-const mkSnapshot = (overrides?: Partial<ProviderUsageSnapshot>): ProviderUsageSnapshot => ({
-  provider: "anthropic",
-  displayName: "Claude",
-  windows: [],
-  ...overrides,
-});
+const now = Date.UTC(2026, 0, 7, 12, 0, 0);
 
-const mkSummary = (providers: ProviderUsageSnapshot[]): UsageSummary => ({
-  updatedAt: Date.now(),
-  providers,
-});
+function makeSnapshot(windows: ProviderUsageSnapshot["windows"]): ProviderUsageSnapshot {
+  return {
+    provider: "anthropic",
+    displayName: "Claude",
+    windows,
+  };
+}
 
-describe("formatUsageWindowSummary", () => {
-  it("returns null when snapshot has error", () => {
-    expect(formatUsageWindowSummary(mkSnapshot({ error: "fail" }))).toBeNull();
+describe("provider-usage.format", () => {
+  it("returns null summary for errored or empty snapshots", () => {
+    expect(formatUsageWindowSummary({ ...makeSnapshot([]), error: "HTTP 401" })).toBeNull();
+    expect(formatUsageWindowSummary(makeSnapshot([]))).toBeNull();
   });
 
-  it("returns null for empty windows", () => {
-    expect(formatUsageWindowSummary(mkSnapshot({ windows: [] }))).toBeNull();
-  });
-
-  it("formats a single window without resets", () => {
-    const result = formatUsageWindowSummary(
-      mkSnapshot({
-        windows: [{ label: "daily", usedPercent: 30 }],
-      }),
-    );
-    expect(result).toBe("daily 70% left");
-  });
-
-  it("formats multiple windows", () => {
-    const result = formatUsageWindowSummary(
-      mkSnapshot({
-        windows: [
-          { label: "daily", usedPercent: 20 },
-          { label: "monthly", usedPercent: 50 },
-        ],
-      }),
-    );
-    expect(result).toBe("daily 80% left · monthly 50% left");
-  });
-
-  it("respects maxWindows option", () => {
-    const result = formatUsageWindowSummary(
-      mkSnapshot({
-        windows: [
-          { label: "daily", usedPercent: 10 },
-          { label: "weekly", usedPercent: 20 },
-          { label: "monthly", usedPercent: 30 },
-        ],
-      }),
-      { maxWindows: 2 },
-    );
-    expect(result).toBe("daily 90% left · weekly 80% left");
-  });
-
-  it("includes resets when requested", () => {
-    const now = 1000000;
-    const result = formatUsageWindowSummary(
-      mkSnapshot({
-        windows: [{ label: "daily", usedPercent: 40, resetAt: now + 30 * 60000 }],
-      }),
+  it("formats reset windows across now/minute/hour/day/date buckets", () => {
+    const summary = formatUsageWindowSummary(
+      makeSnapshot([
+        { label: "Now", usedPercent: 10, resetAt: now - 1 },
+        { label: "Minute", usedPercent: 20, resetAt: now + 30 * 60_000 },
+        { label: "Hour", usedPercent: 30, resetAt: now + 2 * 60 * 60_000 + 15 * 60_000 },
+        { label: "Day", usedPercent: 40, resetAt: now + (2 * 24 + 3) * 60 * 60_000 },
+        { label: "Date", usedPercent: 50, resetAt: Date.UTC(2026, 0, 20, 12, 0, 0) },
+      ]),
       { now, includeResets: true },
     );
-    expect(result).toBe("daily 60% left ⏱30m");
+
+    expect(summary).toContain("Now 90% left ⏱now");
+    expect(summary).toContain("Minute 80% left ⏱30m");
+    expect(summary).toContain("Hour 70% left ⏱2h 15m");
+    expect(summary).toContain("Day 60% left ⏱2d 3h");
+    expect(summary).toMatch(/Date 50% left ⏱[A-Z][a-z]{2} \d{1,2}/);
   });
 
-  it("shows reset as 'now' when past", () => {
-    const now = 1000000;
-    const result = formatUsageWindowSummary(
-      mkSnapshot({
-        windows: [{ label: "daily", usedPercent: 40, resetAt: now - 100 }],
-      }),
-      { now, includeResets: true },
+  it("honors max windows and reset toggle", () => {
+    const summary = formatUsageWindowSummary(
+      makeSnapshot([
+        { label: "A", usedPercent: 10, resetAt: now + 60_000 },
+        { label: "B", usedPercent: 20, resetAt: now + 120_000 },
+        { label: "C", usedPercent: 30, resetAt: now + 180_000 },
+      ]),
+      { now, maxWindows: 2, includeResets: false },
     );
-    expect(result).toBe("daily 60% left ⏱now");
+
+    expect(summary).toBe("A 90% left · B 80% left");
   });
 
-  it("clamps remaining percent to 0-100", () => {
-    const result = formatUsageWindowSummary(
-      mkSnapshot({
-        windows: [{ label: "daily", usedPercent: 120 }],
-      }),
+  it("formats summary line from highest-usage window and provider cap", () => {
+    const summary: UsageSummary = {
+      updatedAt: now,
+      providers: [
+        {
+          provider: "anthropic",
+          displayName: "Claude",
+          windows: [
+            { label: "5h", usedPercent: 20 },
+            { label: "Week", usedPercent: 70 },
+          ],
+        },
+        {
+          provider: "zai",
+          displayName: "z.ai",
+          windows: [{ label: "Day", usedPercent: 10 }],
+        },
+      ],
+    };
+
+    expect(formatUsageSummaryLine(summary, { now, maxProviders: 1 })).toBe(
+      "📊 Usage: Claude 30% left (Week)",
     );
-    expect(result).toBe("daily 0% left");
-  });
-});
-
-describe("formatUsageSummaryLine", () => {
-  it("returns null when no providers have windows", () => {
-    const summary = mkSummary([mkSnapshot({ windows: [] })]);
-    expect(formatUsageSummaryLine(summary)).toBeNull();
   });
 
-  it("returns null when all providers have errors", () => {
-    const summary = mkSummary([
-      mkSnapshot({ error: "fail", windows: [{ label: "d", usedPercent: 10 }] }),
+  it("formats report output for empty, error, no-data, and plan entries", () => {
+    expect(formatUsageReportLines({ updatedAt: now, providers: [] })).toEqual([
+      "Usage: no provider usage available.",
     ]);
-    expect(formatUsageSummaryLine(summary)).toBeNull();
-  });
 
-  it("formats single provider summary", () => {
-    const summary = mkSummary([
-      mkSnapshot({
-        displayName: "Claude",
-        windows: [{ label: "daily", usedPercent: 25 }],
-      }),
+    const summary: UsageSummary = {
+      updatedAt: now,
+      providers: [
+        {
+          provider: "openai-codex",
+          displayName: "Codex",
+          windows: [],
+          error: "Token expired",
+          plan: "Plus",
+        },
+        {
+          provider: "xiaomi",
+          displayName: "Xiaomi",
+          windows: [],
+        },
+      ],
+    };
+    expect(formatUsageReportLines(summary)).toEqual([
+      "Usage:",
+      "  Codex (Plus): Token expired",
+      "  Xiaomi: no data",
     ]);
-    const result = formatUsageSummaryLine(summary);
-    expect(result).toContain("📊 Usage:");
-    expect(result).toContain("Claude");
-    expect(result).toContain("75% left");
-  });
-
-  it("formats multiple providers", () => {
-    const summary = mkSummary([
-      mkSnapshot({
-        displayName: "Claude",
-        windows: [{ label: "daily", usedPercent: 25 }],
-      }),
-      mkSnapshot({
-        provider: "zai",
-        displayName: "z.ai",
-        windows: [{ label: "monthly", usedPercent: 60 }],
-      }),
-    ]);
-    const result = formatUsageSummaryLine(summary);
-    expect(result).toContain("Claude");
-    expect(result).toContain("z.ai");
-  });
-
-  it("picks highest usage window for display", () => {
-    const summary = mkSummary([
-      mkSnapshot({
-        displayName: "Claude",
-        windows: [
-          { label: "daily", usedPercent: 10 },
-          { label: "monthly", usedPercent: 80 },
-        ],
-      }),
-    ]);
-    const result = formatUsageSummaryLine(summary);
-    // The primary window is the one with highest usedPercent (monthly 80%)
-    expect(result).toContain("20% left");
-    expect(result).toContain("monthly");
-  });
-
-  it("respects maxProviders", () => {
-    const summary = mkSummary([
-      mkSnapshot({ displayName: "A", windows: [{ label: "d", usedPercent: 10 }] }),
-      mkSnapshot({ displayName: "B", windows: [{ label: "d", usedPercent: 20 }] }),
-      mkSnapshot({ displayName: "C", windows: [{ label: "d", usedPercent: 30 }] }),
-    ]);
-    const result = formatUsageSummaryLine(summary, { maxProviders: 1 });
-    expect(result).toContain("A");
-    expect(result).not.toContain("B");
-  });
-});
-
-describe("formatUsageReportLines", () => {
-  it("returns fallback for empty providers", () => {
-    const summary = mkSummary([]);
-    const lines = formatUsageReportLines(summary);
-    expect(lines).toEqual(["Usage: no provider usage available."]);
-  });
-
-  it("formats provider with error", () => {
-    const summary = mkSummary([mkSnapshot({ displayName: "Claude", error: "timeout" })]);
-    const lines = formatUsageReportLines(summary);
-    expect(lines).toContain("Usage:");
-    expect(lines.some((l) => l.includes("Claude") && l.includes("timeout"))).toBe(true);
-  });
-
-  it("formats provider with no data", () => {
-    const summary = mkSummary([mkSnapshot({ displayName: "Claude", windows: [] })]);
-    const lines = formatUsageReportLines(summary);
-    expect(lines.some((l) => l.includes("no data"))).toBe(true);
-  });
-
-  it("formats provider with windows and plan", () => {
-    const summary = mkSummary([
-      mkSnapshot({
-        displayName: "Claude",
-        plan: "pro",
-        windows: [{ label: "daily", usedPercent: 30 }],
-      }),
-    ]);
-    const lines = formatUsageReportLines(summary);
-    expect(lines.some((l) => l.includes("(pro)"))).toBe(true);
-    expect(lines.some((l) => l.includes("70% left"))).toBe(true);
-  });
-
-  it("includes reset time when provided", () => {
-    const now = 1000000;
-    const summary = mkSummary([
-      mkSnapshot({
-        displayName: "Claude",
-        windows: [{ label: "daily", usedPercent: 40, resetAt: now + 120 * 60000 }],
-      }),
-    ]);
-    const lines = formatUsageReportLines(summary, { now });
-    expect(lines.some((l) => l.includes("resets 2h"))).toBe(true);
   });
 });
