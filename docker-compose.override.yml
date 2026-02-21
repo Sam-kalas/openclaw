@@ -1,0 +1,36 @@
+# ============================================
+# OpenClaw Local Overrides
+# This file is auto-loaded by docker compose and
+# WON'T be overwritten by git pull / checkout.
+# Add it to .gitignore if not already there.
+# ============================================
+
+services:
+  openclaw-gateway:
+    user: node
+    environment:
+      # API Keys (from .env)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      BRAVE_API_KEY: ${BRAVE_API_KEY}
+      # Telegram bot tokens
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TI_BISCUIT_BOT_TOKEN: ${TI_BISCUIT_BOT_TOKEN}
+      # Google/gog
+      GOG_KEYRING_PASSWORD: ${GOG_KEYRING_PASSWORD:-openclaw}
+      GOG_ACCOUNT: ${GOG_ACCOUNT}
+    volumes:
+      # Google OAuth credentials
+      - ${OPENCLAW_CONFIG_DIR}/gogcli:/home/node/.config/gogcli
+    # Resource limits
+    mem_limit: 4g
+    memswap_limit: 4g
+    cpus: 3.0
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "const h=require('http');h.get('http://localhost:18789/__openclaw__/canvas/',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

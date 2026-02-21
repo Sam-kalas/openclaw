@@ -1,0 +1,90 @@
+# =============================================================================
+# Multi-stage build for OpenClaw Gateway
+# Stage 1 (builder): Full node:22-bookworm with build tools for native modules
+# Stage 2 (runtime): Slim node:22-bookworm-slim with only production deps
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Builder — compile native modules + build application
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm AS builder
+
+# Install Bun (required for build scripts)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+RUN corepack enable
+
+WORKDIR /app
+
+# Install all dependencies (including dev) for building
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY ui/package.json ./ui/package.json
+COPY patches ./patches
+COPY scripts ./scripts
+
+RUN pnpm install --frozen-lockfile
+
+# Copy source and build
+COPY . .
+RUN pnpm build
+# Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
+ENV OPENCLAW_PREFER_PNPM=1
+RUN pnpm ui:build
+
+# Prune to production-only dependencies (removes typescript, rolldown, vitest, etc.)
+# CI=true required for pnpm to modify modules without TTY confirmation
+RUN CI=true pnpm install --prod --ignore-scripts \
+    && rm -rf /root/.bun \
+    && rm -rf /app/src /app/ui/src /app/ui/vite.config.ts \
+    && rm -rf /app/.git /app/.github /app/docs \
+    # Remove GPU-specific llama-cpp binaries (not needed for API-only gateway)
+    && rm -rf node_modules/.pnpm/@node-llama-cpp+linux-x64-cuda-ext* \
+              node_modules/.pnpm/@node-llama-cpp+linux-x64-cuda@* \
+              node_modules/.pnpm/@node-llama-cpp+linux-x64-vulkan* \
+    # Remove musl variants (we run on glibc/Debian)
+    && rm -rf node_modules/.pnpm/@napi-rs+canvas-linux-x64-musl* \
+              node_modules/.pnpm/@rolldown+binding-linux-x64-musl* \
+              node_modules/.pnpm/@img+sharp-libvips-linuxmusl-x64*
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime — minimal image with only production files
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim
+
+RUN corepack enable
+
+WORKDIR /app
+
+# Install runtime system packages (ffmpeg for TTS voice conversion)
+ARG OPENCLAW_DOCKER_APT_PACKAGES=""
+RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    fi
+
+# Copy built application from builder (--chown avoids the 1.7GB chown layer)
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/openclaw.mjs ./
+COPY --from=builder --chown=node:node /app/package.json ./
+COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml ./
+COPY --from=builder --chown=node:node /app/.npmrc ./
+COPY --from=builder --chown=node:node /app/patches ./patches
+COPY --from=builder --chown=node:node /app/skills ./skills
+COPY --from=builder --chown=node:node /app/extensions ./extensions
+COPY --from=builder --chown=node:node /app/packages ./packages
+COPY --from=builder --chown=node:node /app/pnpm-lock.yaml ./
+# UI package.json needed for pnpm workspace resolution
+COPY --from=builder --chown=node:node /app/ui/package.json ./ui/package.json
+
+ENV NODE_ENV=production
+
+# Security hardening: Run as non-root user
+# The node:22-bookworm-slim image includes a 'node' user (uid 1000)
+USER node
+
+# Start gateway server with default config.
+CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
