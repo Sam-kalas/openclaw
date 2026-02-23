@@ -1,6 +1,4 @@
 import { ChannelType } from "@buape/carbon";
-import type { ReplyPayload } from "../../auto-reply/types.js";
-import type { DiscordMessagePreflightContext } from "./message-handler.preflight.js";
 import { resolveAckReaction, resolveHumanDelayConfig } from "../../agents/identity.js";
 import { EmbeddedBlockChunker } from "../../agents/pi-embedded-block-chunker.js";
 import { resolveChunkMode } from "../../auto-reply/chunk.js";
@@ -12,6 +10,7 @@ import {
 } from "../../auto-reply/reply/history.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
 import { createReplyDispatcherWithTyping } from "../../auto-reply/reply/reply-dispatcher.js";
+import type { ReplyPayload } from "../../auto-reply/types.js";
 import { shouldAckReaction as shouldAckReactionGate } from "../../channels/ack-reactions.js";
 import { logTypingFailure, logAckFailure } from "../../channels/logging.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
@@ -22,6 +21,7 @@ import {
   type StatusReactionAdapter,
 } from "../../channels/status-reactions.js";
 import { createTypingCallbacks } from "../../channels/typing.js";
+import { resolveDiscordPreviewStreamMode } from "../../config/discord-preview-streaming.js";
 import { resolveMarkdownTableMode } from "../../config/markdown-tables.js";
 import { readSessionUpdatedAt, resolveStorePath } from "../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../globals.js";
@@ -37,6 +37,7 @@ import { reactMessageDiscord, removeReactionDiscord } from "../send.js";
 import { editMessageDiscord } from "../send.messages.js";
 import { normalizeDiscordSlug, resolveDiscordOwnerAllowFrom } from "./allow-list.js";
 import { resolveTimestampMs } from "./format.js";
+import type { DiscordMessagePreflightContext } from "./message-handler.preflight.js";
 import {
   buildDiscordMediaPayload,
   resolveDiscordMessageText,
@@ -413,7 +414,7 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
   });
 
   // --- Discord draft stream (edit-based preview streaming) ---
-  const discordStreamMode = discordConfig?.streamMode ?? "off";
+  const discordStreamMode = resolveDiscordPreviewStreamMode(discordConfig);
   const draftMaxChars = Math.min(textLimit, 2000);
   const accountBlockStreamingEnabled =
     typeof discordConfig?.blockStreaming === "boolean"

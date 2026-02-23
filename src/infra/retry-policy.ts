@@ -1,5 +1,5 @@
 import { RateLimitError } from "@buape/carbon";
-import { logWarn } from "../logger.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { formatErrorMessage } from "./errors.js";
 import { type RetryConfig, resolveRetryConfig, retryAsync } from "./retry.js";
 
@@ -20,6 +20,7 @@ export const TELEGRAM_RETRY_DEFAULTS = {
 };
 
 const TELEGRAM_RETRY_RE = /429|timeout|connect|reset|closed|unavailable|temporarily/i;
+const log = createSubsystemLogger("retry-policy");
 
 function getTelegramRetryAfterMs(err: unknown): number | undefined {
   if (!err || typeof err !== "object") {
@@ -58,13 +59,15 @@ export function createDiscordRetryRunner(params: {
       label,
       shouldRetry: (err) => err instanceof RateLimitError,
       retryAfterMs: (err) => (err instanceof RateLimitError ? err.retryAfter * 1000 : undefined),
-      onRetry: (info) => {
-        const labelText = info.label ?? "request";
-        const maxRetries = Math.max(1, info.maxAttempts - 1);
-        logWarn(
-          `discord: ${labelText} rate limited, retry ${info.attempt}/${maxRetries} in ${info.delayMs}ms`,
-        );
-      },
+      onRetry: params.verbose
+        ? (info) => {
+            const labelText = info.label ?? "request";
+            const maxRetries = Math.max(1, info.maxAttempts - 1);
+            log.warn(
+              `discord ${labelText} rate limited, retry ${info.attempt}/${maxRetries} in ${info.delayMs}ms`,
+            );
+          }
+        : undefined,
     });
 }
 
@@ -88,11 +91,13 @@ export function createTelegramRetryRunner(params: {
       label,
       shouldRetry,
       retryAfterMs: getTelegramRetryAfterMs,
-      onRetry: (info) => {
-        const maxRetries = Math.max(1, info.maxAttempts - 1);
-        logWarn(
-          `telegram: send retry ${info.attempt}/${maxRetries} for ${info.label ?? label ?? "request"} in ${info.delayMs}ms: ${formatErrorMessage(info.err)}`,
-        );
-      },
+      onRetry: params.verbose
+        ? (info) => {
+            const maxRetries = Math.max(1, info.maxAttempts - 1);
+            log.warn(
+              `telegram send retry ${info.attempt}/${maxRetries} for ${info.label ?? label ?? "request"} in ${info.delayMs}ms: ${formatErrorMessage(info.err)}`,
+            );
+          }
+        : undefined,
     });
 }

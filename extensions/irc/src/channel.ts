@@ -4,11 +4,12 @@ import {
   formatPairingApproveHint,
   getChatChannelMeta,
   PAIRING_APPROVED_MESSAGE,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveDefaultGroupPolicy,
   setAccountEnabledInConfigSection,
   deleteAccountFromConfigSection,
   type ChannelPlugin,
 } from "openclaw/plugin-sdk";
-import type { CoreConfig, IrcProbe } from "./types.js";
 import {
   listIrcAccountIds,
   resolveDefaultIrcAccountId,
@@ -28,6 +29,7 @@ import { resolveIrcGroupMatch, resolveIrcRequireMention } from "./policy.js";
 import { probeIrc } from "./probe.js";
 import { getIrcRuntime } from "./runtime.js";
 import { sendMessageIrc } from "./send.js";
+import type { CoreConfig, IrcProbe } from "./types.js";
 
 const meta = getChatChannelMeta("irc");
 
@@ -134,8 +136,12 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = {
     },
     collectWarnings: ({ account, cfg }) => {
       const warnings: string[] = [];
-      const defaultGroupPolicy = cfg.channels?.defaults?.groupPolicy;
-      const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
+      const defaultGroupPolicy = resolveDefaultGroupPolicy(cfg);
+      const { groupPolicy } = resolveAllowlistProviderRuntimeGroupPolicy({
+        providerConfigPresent: cfg.channels?.irc !== undefined,
+        groupPolicy: account.config.groupPolicy,
+        defaultGroupPolicy,
+      });
       if (groupPolicy === "open") {
         warnings.push(
           '- IRC channels: groupPolicy="open" allows all channels and senders (mention-gated). Prefer channels.irc.groupPolicy="allowlist" with channels.irc.groups.',

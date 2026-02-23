@@ -1,8 +1,4 @@
 import { ChannelType, MessageType, type User } from "@buape/carbon";
-import type {
-  DiscordMessagePreflightContext,
-  DiscordMessagePreflightParams,
-} from "./message-handler.preflight.types.js";
 import { hasControlCommand } from "../../auto-reply/command-detection.js";
 import { shouldHandleTextCommands } from "../../auto-reply/commands-registry.js";
 import {
@@ -49,6 +45,10 @@ import {
   resolveDiscordSystemLocation,
   resolveTimestampMs,
 } from "./format.js";
+import type {
+  DiscordMessagePreflightContext,
+  DiscordMessagePreflightParams,
+} from "./message-handler.preflight.types.js";
 import {
   resolveDiscordChannelInfo,
   resolveDiscordMessageChannelId,
@@ -178,7 +178,8 @@ export async function preflightDiscordMessage(
       return null;
     }
     if (dmPolicy !== "open") {
-      const storeAllowFrom = await readChannelAllowFromStore("discord").catch(() => []);
+      const storeAllowFrom =
+        dmPolicy === "allowlist" ? [] : await readChannelAllowFromStore("discord").catch(() => []);
       const effectiveAllowFrom = [...(params.allowFrom ?? []), ...storeAllowFrom];
       const allowList = normalizeDiscordAllowList(effectiveAllowFrom, ["discord:", "user:", "pk:"]);
       const allowMatch = allowList

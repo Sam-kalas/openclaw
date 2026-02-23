@@ -1,6 +1,10 @@
-import type { VoicePlugin } from "@buape/carbon/voice";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
 import type { Readable } from "node:stream";
 import { ChannelType, type Client, ReadyListener } from "@buape/carbon";
+import type { VoicePlugin } from "@buape/carbon/voice";
 import {
   AudioPlayerStatus,
   EndBehaviorType,
@@ -12,16 +16,11 @@ import {
   type AudioPlayer,
   type VoiceConnection,
 } from "@discordjs/voice";
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import { createRequire } from "node:module";
-import path from "node:path";
+import { resolveAgentDir } from "../../agents/agent-scope.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
+import { agentCommand } from "../../commands/agent.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { DiscordAccountConfig, TtsConfig } from "../../config/types.js";
-import type { RuntimeEnv } from "../../runtime.js";
-import { resolveAgentDir } from "../../agents/agent-scope.js";
-import { agentCommand } from "../../commands/agent.js";
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
@@ -33,6 +32,7 @@ import {
   runCapability,
 } from "../../media-understanding/runner.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
+import type { RuntimeEnv } from "../../runtime.js";
 import { parseTtsDirectives } from "../../tts/tts-core.js";
 import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
 
@@ -146,25 +146,33 @@ type OpusDecoder = {
   decode: (buffer: Buffer) => Buffer;
 };
 
+let warnedOpusFallback = false;
+
 function createOpusDecoder(): { decoder: OpusDecoder; name: string } | null {
-  try {
-    const OpusScript = require("opusscript") as {
-      new (sampleRate: number, channels: number, application: number): OpusDecoder;
-      Application: { AUDIO: number };
-    };
-    const decoder = new OpusScript(SAMPLE_RATE, CHANNELS, OpusScript.Application.AUDIO);
-    return { decoder, name: "opusscript" };
-  } catch (err) {
-    logger.warn(`discord voice: opusscript init failed: ${formatErrorMessage(err)}`);
-  }
   try {
     const { OpusEncoder } = require("@discordjs/opus") as {
       OpusEncoder: new (sampleRate: number, channels: number) => OpusDecoder;
     };
     const decoder = new OpusEncoder(SAMPLE_RATE, CHANNELS);
     return { decoder, name: "@discordjs/opus" };
-  } catch (err) {
-    logger.warn(`discord voice: opus decoder init failed: ${formatErrorMessage(err)}`);
+  } catch (nativeErr) {
+    try {
+      const OpusScript = require("opusscript") as {
+        new (sampleRate: number, channels: number, application: number): OpusDecoder;
+        Application: { AUDIO: number };
+      };
+      const decoder = new OpusScript(SAMPLE_RATE, CHANNELS, OpusScript.Application.AUDIO);
+      if (!warnedOpusFallback) {
+        warnedOpusFallback = true;
+        logger.warn(
+          `discord voice: @discordjs/opus unavailable (${formatErrorMessage(nativeErr)}); using opusscript fallback`,
+        );
+      }
+      return { decoder, name: "opusscript" };
+    } catch (jsErr) {
+      logger.warn(`discord voice: opus decoder init failed: ${formatErrorMessage(nativeErr)}`);
+      logger.warn(`discord voice: opusscript init failed: ${formatErrorMessage(jsErr)}`);
+    }
   }
   return null;
 }

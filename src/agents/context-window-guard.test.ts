@@ -1,124 +1,148 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
-  resolveContextWindowInfo,
-  evaluateContextWindowGuard,
   CONTEXT_WINDOW_HARD_MIN_TOKENS,
   CONTEXT_WINDOW_WARN_BELOW_TOKENS,
+  evaluateContextWindowGuard,
+  resolveContextWindowInfo,
 } from "./context-window-guard.js";
 
-describe("resolveContextWindowInfo", () => {
-  it("uses modelsConfig when available", () => {
+describe("context-window-guard", () => {
+  it("blocks below 16k (model metadata)", () => {
+    const info = resolveContextWindowInfo({
+      cfg: undefined,
+      provider: "openrouter",
+      modelId: "tiny",
+      modelContextWindow: 8000,
+      defaultTokens: 200_000,
+    });
+    const guard = evaluateContextWindowGuard({ info });
+    expect(guard.source).toBe("model");
+    expect(guard.tokens).toBe(8000);
+    expect(guard.shouldWarn).toBe(true);
+    expect(guard.shouldBlock).toBe(true);
+  });
+
+  it("warns below 32k but does not block at 16k+", () => {
+    const info = resolveContextWindowInfo({
+      cfg: undefined,
+      provider: "openai",
+      modelId: "small",
+      modelContextWindow: 24_000,
+      defaultTokens: 200_000,
+    });
+    const guard = evaluateContextWindowGuard({ info });
+    expect(guard.tokens).toBe(24_000);
+    expect(guard.shouldWarn).toBe(true);
+    expect(guard.shouldBlock).toBe(false);
+  });
+
+  it("does not warn at 32k+ (model metadata)", () => {
+    const info = resolveContextWindowInfo({
+      cfg: undefined,
+      provider: "openai",
+      modelId: "ok",
+      modelContextWindow: 64_000,
+      defaultTokens: 200_000,
+    });
+    const guard = evaluateContextWindowGuard({ info });
+    expect(guard.shouldWarn).toBe(false);
+    expect(guard.shouldBlock).toBe(false);
+  });
+
+  it("uses models.providers.*.models[].contextWindow when present", () => {
     const cfg = {
       models: {
         providers: {
-          anthropic: {
-            models: [{ id: "claude-3", contextWindow: 100_000 }],
+          openrouter: {
+            baseUrl: "http://localhost",
+            apiKey: "x",
+            models: [
+              {
+                id: "tiny",
+                name: "tiny",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 12_000,
+                maxTokens: 256,
+              },
+            ],
           },
         },
       },
-    } as unknown as OpenClawConfig;
-    const result = resolveContextWindowInfo({
+    } satisfies OpenClawConfig;
+
+    const info = resolveContextWindowInfo({
       cfg,
-      provider: "anthropic",
-      modelId: "claude-3",
-      modelContextWindow: 50_000,
+      provider: "openrouter",
+      modelId: "tiny",
+      modelContextWindow: 64_000,
       defaultTokens: 200_000,
     });
-    expect(result.tokens).toBe(100_000);
-    expect(result.source).toBe("modelsConfig");
+    const guard = evaluateContextWindowGuard({ info });
+    expect(info.source).toBe("modelsConfig");
+    expect(guard.shouldBlock).toBe(true);
   });
 
-  it("falls back to model context window", () => {
-    const result = resolveContextWindowInfo({
-      cfg: undefined,
-      provider: "anthropic",
-      modelId: "claude-3",
-      modelContextWindow: 128_000,
-      defaultTokens: 200_000,
-    });
-    expect(result.tokens).toBe(128_000);
-    expect(result.source).toBe("model");
-  });
-
-  it("falls back to default tokens", () => {
-    const result = resolveContextWindowInfo({
-      cfg: undefined,
-      provider: "anthropic",
-      modelId: "claude-3",
-      defaultTokens: 200_000,
-    });
-    expect(result.tokens).toBe(200_000);
-    expect(result.source).toBe("default");
-  });
-
-  it("applies agentContextTokens cap", () => {
+  it("caps with agents.defaults.contextTokens", () => {
     const cfg = {
-      agents: { defaults: { contextTokens: 50_000 } },
-    } as unknown as OpenClawConfig;
-    const result = resolveContextWindowInfo({
+      agents: { defaults: { contextTokens: 20_000 } },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
       cfg,
       provider: "anthropic",
-      modelId: "claude-3",
+      modelId: "whatever",
       modelContextWindow: 200_000,
       defaultTokens: 200_000,
     });
-    expect(result.tokens).toBe(50_000);
-    expect(result.source).toBe("agentContextTokens");
+    const guard = evaluateContextWindowGuard({ info });
+    expect(info.source).toBe("agentContextTokens");
+    expect(guard.shouldWarn).toBe(true);
+    expect(guard.shouldBlock).toBe(false);
   });
 
-  it("ignores cap if larger than base", () => {
+  it("does not override when cap exceeds base window", () => {
     const cfg = {
-      agents: { defaults: { contextTokens: 500_000 } },
-    } as unknown as OpenClawConfig;
-    const result = resolveContextWindowInfo({
+      agents: { defaults: { contextTokens: 128_000 } },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
       cfg,
       provider: "anthropic",
-      modelId: "claude-3",
-      modelContextWindow: 200_000,
+      modelId: "whatever",
+      modelContextWindow: 64_000,
       defaultTokens: 200_000,
     });
-    expect(result.tokens).toBe(200_000);
-    expect(result.source).toBe("model");
+    expect(info.source).toBe("model");
+    expect(info.tokens).toBe(64_000);
   });
-});
 
-describe("evaluateContextWindowGuard", () => {
-  it("returns shouldWarn=false and shouldBlock=false for large window", () => {
-    const result = evaluateContextWindowGuard({
-      info: { tokens: 200_000, source: "model" },
+  it("uses default when nothing else is available", () => {
+    const info = resolveContextWindowInfo({
+      cfg: undefined,
+      provider: "anthropic",
+      modelId: "unknown",
+      modelContextWindow: undefined,
+      defaultTokens: 200_000,
     });
-    expect(result.shouldWarn).toBe(false);
-    expect(result.shouldBlock).toBe(false);
+    const guard = evaluateContextWindowGuard({ info });
+    expect(info.source).toBe("default");
+    expect(guard.shouldWarn).toBe(false);
+    expect(guard.shouldBlock).toBe(false);
   });
 
-  it("returns shouldWarn=true below warn threshold", () => {
-    const result = evaluateContextWindowGuard({
-      info: { tokens: 20_000, source: "model" },
+  it("allows overriding thresholds", () => {
+    const info = { tokens: 10_000, source: "model" as const };
+    const guard = evaluateContextWindowGuard({
+      info,
+      warnBelowTokens: 12_000,
+      hardMinTokens: 9_000,
     });
-    expect(result.shouldWarn).toBe(true);
-    expect(result.shouldBlock).toBe(false);
+    expect(guard.shouldWarn).toBe(true);
+    expect(guard.shouldBlock).toBe(false);
   });
 
-  it("returns shouldBlock=true below hard min", () => {
-    const result = evaluateContextWindowGuard({
-      info: { tokens: 8_000, source: "model" },
-    });
-    expect(result.shouldWarn).toBe(true);
-    expect(result.shouldBlock).toBe(true);
-  });
-
-  it("supports custom thresholds", () => {
-    const result = evaluateContextWindowGuard({
-      info: { tokens: 5_000, source: "model" },
-      warnBelowTokens: 4_000,
-      hardMinTokens: 2_000,
-    });
-    expect(result.shouldWarn).toBe(false);
-    expect(result.shouldBlock).toBe(false);
-  });
-
-  it("exports expected constants", () => {
+  it("exports thresholds as expected", () => {
     expect(CONTEXT_WINDOW_HARD_MIN_TOKENS).toBe(16_000);
     expect(CONTEXT_WINDOW_WARN_BELOW_TOKENS).toBe(32_000);
   });

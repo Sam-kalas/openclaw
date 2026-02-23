@@ -1,10 +1,9 @@
-import type { ChannelId } from "../../channels/plugins/types.js";
-import type { OpenClawConfig } from "../../config/config.js";
-import type { CommandHandler } from "./commands-types.js";
 import { getChannelDock } from "../../channels/dock.js";
 import { resolveChannelConfigWrites } from "../../channels/plugins/config-writes.js";
 import { listPairingChannels } from "../../channels/plugins/pairing.js";
+import type { ChannelId } from "../../channels/plugins/types.js";
 import { normalizeChannelId } from "../../channels/registry.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import {
   readConfigFileSnapshot,
   validateConfigObjectWithPlugins,
@@ -25,6 +24,7 @@ import { resolveSlackUserAllowlist } from "../../slack/resolve-users.js";
 import { resolveTelegramAccount } from "../../telegram/accounts.js";
 import { resolveWhatsAppAccount } from "../../web/accounts.js";
 import { rejectUnauthorizedCommand, requireCommandFlagEnabled } from "./command-gates.js";
+import type { CommandHandler } from "./commands-types.js";
 
 type AllowlistScope = "dm" | "group" | "all";
 type AllowlistAction = "list" | "add" | "remove";
@@ -173,6 +173,22 @@ function formatEntryList(entries: string[], resolved?: Map<string, string>): str
       return name ? `${entry} (${name})` : entry;
     })
     .join(", ");
+}
+
+function extractConfigAllowlist(account: {
+  config?: {
+    allowFrom?: Array<string | number>;
+    groupAllowFrom?: Array<string | number>;
+    dmPolicy?: string;
+    groupPolicy?: string;
+  };
+}) {
+  return {
+    dmAllowFrom: (account.config?.allowFrom ?? []).map(String),
+    groupAllowFrom: (account.config?.groupAllowFrom ?? []).map(String),
+    dmPolicy: account.config?.dmPolicy,
+    groupPolicy: account.config?.groupPolicy,
+  };
 }
 
 function resolveAccountTarget(
@@ -363,10 +379,7 @@ export const handleAllowlistCommand: CommandHandler = async (params, allowTextCo
 
     if (channelId === "telegram") {
       const account = resolveTelegramAccount({ cfg: params.cfg, accountId });
-      dmAllowFrom = (account.config.allowFrom ?? []).map(String);
-      groupAllowFrom = (account.config.groupAllowFrom ?? []).map(String);
-      dmPolicy = account.config.dmPolicy;
-      groupPolicy = account.config.groupPolicy;
+      ({ dmAllowFrom, groupAllowFrom, dmPolicy, groupPolicy } = extractConfigAllowlist(account));
       const groups = account.config.groups ?? {};
       for (const [groupId, groupCfg] of Object.entries(groups)) {
         const entries = (groupCfg?.allowFrom ?? []).map(String).filter(Boolean);
@@ -389,16 +402,10 @@ export const handleAllowlistCommand: CommandHandler = async (params, allowTextCo
       groupPolicy = account.groupPolicy;
     } else if (channelId === "signal") {
       const account = resolveSignalAccount({ cfg: params.cfg, accountId });
-      dmAllowFrom = (account.config.allowFrom ?? []).map(String);
-      groupAllowFrom = (account.config.groupAllowFrom ?? []).map(String);
-      dmPolicy = account.config.dmPolicy;
-      groupPolicy = account.config.groupPolicy;
+      ({ dmAllowFrom, groupAllowFrom, dmPolicy, groupPolicy } = extractConfigAllowlist(account));
     } else if (channelId === "imessage") {
       const account = resolveIMessageAccount({ cfg: params.cfg, accountId });
-      dmAllowFrom = (account.config.allowFrom ?? []).map(String);
-      groupAllowFrom = (account.config.groupAllowFrom ?? []).map(String);
-      dmPolicy = account.config.dmPolicy;
-      groupPolicy = account.config.groupPolicy;
+      ({ dmAllowFrom, groupAllowFrom, dmPolicy, groupPolicy } = extractConfigAllowlist(account));
     } else if (channelId === "slack") {
       const account = resolveSlackAccount({ cfg: params.cfg, accountId });
       dmAllowFrom = (account.config.allowFrom ?? account.config.dm?.allowFrom ?? []).map(String);

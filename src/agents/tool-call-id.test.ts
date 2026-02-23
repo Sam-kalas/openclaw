@@ -1,176 +1,234 @@
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
-  sanitizeToolCallId,
   isValidCloudCodeAssistToolId,
   sanitizeToolCallIdsForCloudCodeAssist,
 } from "./tool-call-id.js";
 
-describe("sanitizeToolCallId", () => {
-  describe("strict mode (default)", () => {
-    it("returns alphanumeric-only string unchanged", () => {
-      expect(sanitizeToolCallId("abc123")).toBe("abc123");
-    });
+const buildDuplicateIdCollisionInput = () =>
+  [
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "call_a|b", name: "read", arguments: {} },
+        { type: "toolCall", id: "call_a:b", name: "read", arguments: {} },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "call_a|b",
+      toolName: "read",
+      content: [{ type: "text", text: "one" }],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "call_a:b",
+      toolName: "read",
+      content: [{ type: "text", text: "two" }],
+    },
+  ] as unknown as AgentMessage[];
 
-    it("strips non-alphanumeric characters", () => {
-      expect(sanitizeToolCallId("call_123-abc")).toBe("call123abc");
-    });
+function expectCollisionIdsRemainDistinct(
+  out: AgentMessage[],
+  mode: "strict" | "strict9",
+): { aId: string; bId: string } {
+  const assistant = out[0] as Extract<AgentMessage, { role: "assistant" }>;
+  const a = assistant.content?.[0] as { id?: string };
+  const b = assistant.content?.[1] as { id?: string };
+  expect(typeof a.id).toBe("string");
+  expect(typeof b.id).toBe("string");
+  expect(a.id).not.toBe(b.id);
+  expect(isValidCloudCodeAssistToolId(a.id as string, mode)).toBe(true);
+  expect(isValidCloudCodeAssistToolId(b.id as string, mode)).toBe(true);
 
-    it("returns fallback for empty string", () => {
-      expect(sanitizeToolCallId("")).toBe("defaulttoolid");
-    });
+  const r1 = out[1] as Extract<AgentMessage, { role: "toolResult" }>;
+  const r2 = out[2] as Extract<AgentMessage, { role: "toolResult" }>;
+  expect(r1.toolCallId).toBe(a.id);
+  expect(r2.toolCallId).toBe(b.id);
+  return { aId: a.id as string, bId: b.id as string };
+}
 
-    it("returns fallback for non-string input", () => {
-      expect(sanitizeToolCallId(null as unknown as string)).toBe("defaulttoolid");
-      expect(sanitizeToolCallId(undefined as unknown as string)).toBe("defaulttoolid");
-    });
+function expectSingleToolCallRewrite(
+  out: AgentMessage[],
+  expectedId: string,
+  mode: "strict" | "strict9",
+): void {
+  const assistant = out[0] as Extract<AgentMessage, { role: "assistant" }>;
+  const toolCall = assistant.content?.[0] as { id?: string };
+  expect(toolCall.id).toBe(expectedId);
+  expect(isValidCloudCodeAssistToolId(toolCall.id as string, mode)).toBe(true);
 
-    it("returns sanitizedtoolid when all chars are stripped", () => {
-      expect(sanitizeToolCallId("---")).toBe("sanitizedtoolid");
-    });
-  });
-
-  describe("strict9 mode", () => {
-    it("truncates alphanumeric string to 9 chars", () => {
-      expect(sanitizeToolCallId("abcdefghijklm", "strict9")).toBe("abcdefghi");
-    });
-
-    it("returns exactly 9-char string unchanged", () => {
-      expect(sanitizeToolCallId("abcdefghi", "strict9")).toBe("abcdefghi");
-    });
-
-    it("hashes short alphanumeric strings to 9 chars", () => {
-      const result = sanitizeToolCallId("ab", "strict9");
-      expect(result).toHaveLength(9);
-      expect(result).toMatch(/^[a-f0-9]{9}$/);
-    });
-
-    it("returns defaultid for empty string", () => {
-      expect(sanitizeToolCallId("", "strict9")).toBe("defaultid");
-    });
-
-    it("returns defaultid for non-string input", () => {
-      expect(sanitizeToolCallId(null as unknown as string, "strict9")).toBe("defaultid");
-    });
-
-    it("hashes when all non-alphanumeric chars are stripped and result is short", () => {
-      const result = sanitizeToolCallId("a-b", "strict9");
-      // "ab" is only 2 chars, so it gets hashed to 9
-      expect(result).toHaveLength(9);
-    });
-
-    it("strips non-alphanumeric and truncates long result", () => {
-      const result = sanitizeToolCallId("a1b2c3d4e5f6g7h8", "strict9");
-      expect(result).toBe("a1b2c3d4e");
-      expect(result).toHaveLength(9);
-    });
-  });
-});
-
-describe("isValidCloudCodeAssistToolId", () => {
-  describe("strict mode (default)", () => {
-    it("accepts alphanumeric strings", () => {
-      expect(isValidCloudCodeAssistToolId("abc123")).toBe(true);
-    });
-
-    it("rejects strings with special chars", () => {
-      expect(isValidCloudCodeAssistToolId("abc_123")).toBe(false);
-      expect(isValidCloudCodeAssistToolId("abc-123")).toBe(false);
-    });
-
-    it("rejects empty string", () => {
-      expect(isValidCloudCodeAssistToolId("")).toBe(false);
-    });
-
-    it("rejects non-string input", () => {
-      expect(isValidCloudCodeAssistToolId(null as unknown as string)).toBe(false);
-      expect(isValidCloudCodeAssistToolId(undefined as unknown as string)).toBe(false);
-    });
-  });
-
-  describe("strict9 mode", () => {
-    it("accepts exactly 9-char alphanumeric strings", () => {
-      expect(isValidCloudCodeAssistToolId("abcdefghi", "strict9")).toBe(true);
-    });
-
-    it("rejects strings not exactly 9 chars", () => {
-      expect(isValidCloudCodeAssistToolId("abcdefgh", "strict9")).toBe(false);
-      expect(isValidCloudCodeAssistToolId("abcdefghij", "strict9")).toBe(false);
-    });
-
-    it("rejects 9-char strings with special chars", () => {
-      expect(isValidCloudCodeAssistToolId("abcd_fghi", "strict9")).toBe(false);
-    });
-  });
-});
+  const result = out[1] as Extract<AgentMessage, { role: "toolResult" }>;
+  expect(result.toolCallId).toBe(toolCall.id);
+}
 
 describe("sanitizeToolCallIdsForCloudCodeAssist", () => {
-  it("returns original array when no sanitization needed", () => {
-    const messages = [
-      { role: "user" as const, content: "hello" },
-      { role: "assistant" as const, content: "hi" },
-    ];
-    const result = sanitizeToolCallIdsForCloudCodeAssist(messages as any);
-    expect(result).toBe(messages); // same reference = no change
+  describe("strict mode (default)", () => {
+    it("is a no-op for already-valid non-colliding IDs", () => {
+      const input = [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call1", name: "read", arguments: {} }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call1",
+          toolName: "read",
+          content: [{ type: "text", text: "ok" }],
+        },
+      ] as unknown as AgentMessage[];
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input);
+      expect(out).toBe(input);
+    });
+
+    it("strips non-alphanumeric characters from tool call IDs", () => {
+      const input = [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call|item:123", name: "read", arguments: {} }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call|item:123",
+          toolName: "read",
+          content: [{ type: "text", text: "ok" }],
+        },
+      ] as unknown as AgentMessage[];
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input);
+      expect(out).not.toBe(input);
+      // Strict mode strips all non-alphanumeric characters
+      expectSingleToolCallRewrite(out, "callitem123", "strict");
+    });
+
+    it("avoids collisions when sanitization would produce duplicate IDs", () => {
+      const input = buildDuplicateIdCollisionInput();
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input);
+      expect(out).not.toBe(input);
+      expectCollisionIdsRemainDistinct(out, "strict");
+    });
+
+    it("caps tool call IDs at 40 chars while preserving uniqueness", () => {
+      const longA = `call_${"a".repeat(60)}`;
+      const longB = `call_${"a".repeat(59)}b`;
+      const input = [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: longA, name: "read", arguments: {} },
+            { type: "toolCall", id: longB, name: "read", arguments: {} },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: longA,
+          toolName: "read",
+          content: [{ type: "text", text: "one" }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: longB,
+          toolName: "read",
+          content: [{ type: "text", text: "two" }],
+        },
+      ] as unknown as AgentMessage[];
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input);
+      const { aId, bId } = expectCollisionIdsRemainDistinct(out, "strict");
+      expect(aId.length).toBeLessThanOrEqual(40);
+      expect(bId.length).toBeLessThanOrEqual(40);
+    });
   });
 
-  it("sanitizes tool call ids in assistant messages", () => {
-    const messages = [
-      {
-        role: "assistant" as const,
-        content: [{ type: "toolUse", id: "call_abc-123", name: "read", input: {} }],
-      },
-      {
-        role: "toolResult" as const,
-        toolCallId: "call_abc-123",
-        content: [{ type: "text", text: "ok" }],
-      },
-    ];
-    const result = sanitizeToolCallIdsForCloudCodeAssist(messages as any);
-    // The IDs should be sanitized to alphanumeric only
-    const assistantContent = (result[0] as any).content[0];
-    expect(assistantContent.id).toMatch(/^[a-zA-Z0-9]+$/);
-    // The tool result should have the matching sanitized ID
-    const toolResult = result[1] as any;
-    expect(toolResult.toolCallId).toBe(assistantContent.id);
+  describe("strict mode (alphanumeric only)", () => {
+    it("strips underscores and hyphens from tool call IDs", () => {
+      const input = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "whatsapp_login_1768799841527_1",
+              name: "login",
+              arguments: {},
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "whatsapp_login_1768799841527_1",
+          toolName: "login",
+          content: [{ type: "text", text: "ok" }],
+        },
+      ] as unknown as AgentMessage[];
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input, "strict");
+      expect(out).not.toBe(input);
+      // Strict mode strips all non-alphanumeric characters
+      expectSingleToolCallRewrite(out, "whatsapplogin17687998415271", "strict");
+    });
+
+    it("avoids collisions with alphanumeric-only suffixes", () => {
+      const input = buildDuplicateIdCollisionInput();
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input, "strict");
+      expect(out).not.toBe(input);
+      const { aId, bId } = expectCollisionIdsRemainDistinct(out, "strict");
+      // Should not contain underscores or hyphens
+      expect(aId).not.toMatch(/[_-]/);
+      expect(bId).not.toMatch(/[_-]/);
+    });
   });
 
-  it("handles strict9 mode", () => {
-    const messages = [
-      {
-        role: "assistant" as const,
-        content: [{ type: "functionCall", id: "long-id-with-dashes-123", name: "exec", input: {} }],
-      },
-      {
-        role: "toolResult" as const,
-        toolCallId: "long-id-with-dashes-123",
-        content: [{ type: "text", text: "result" }],
-      },
-    ];
-    const result = sanitizeToolCallIdsForCloudCodeAssist(messages as any, "strict9");
-    const assistantContent = (result[0] as any).content[0];
-    expect(assistantContent.id).toHaveLength(9);
-    expect(assistantContent.id).toMatch(/^[a-zA-Z0-9]{9}$/);
-  });
+  describe("strict9 mode (Mistral tool call IDs)", () => {
+    it("is a no-op for already-valid 9-char alphanumeric IDs", () => {
+      const input = [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "abc123XYZ", name: "read", arguments: {} }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "abc123XYZ",
+          toolName: "read",
+          content: [{ type: "text", text: "ok" }],
+        },
+      ] as unknown as AgentMessage[];
 
-  it("deduplicates colliding sanitized IDs", () => {
-    // "a|b" and "a:b" both become "ab" after stripping non-alphanumeric
-    const messages = [
-      {
-        role: "assistant" as const,
-        content: [
-          { type: "toolUse", id: "a|b", name: "read", input: {} },
-          { type: "toolUse", id: "a:b", name: "write", input: {} },
-        ],
-      },
-      { role: "toolResult" as const, toolCallId: "a|b", content: [{ type: "text", text: "r1" }] },
-      { role: "toolResult" as const, toolCallId: "a:b", content: [{ type: "text", text: "r2" }] },
-    ];
-    const result = sanitizeToolCallIdsForCloudCodeAssist(messages as any);
-    const content = (result[0] as any).content;
-    // Both IDs should be different after dedup
-    expect(content[0].id).not.toBe(content[1].id);
-    // Both should be alphanumeric
-    expect(content[0].id).toMatch(/^[a-zA-Z0-9]+$/);
-    expect(content[1].id).toMatch(/^[a-zA-Z0-9]+$/);
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input, "strict9");
+      expect(out).toBe(input);
+    });
+
+    it("enforces alphanumeric IDs with length 9", () => {
+      const input = [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "call_abc|item:123", name: "read", arguments: {} },
+            { type: "toolCall", id: "call_abc|item:456", name: "read", arguments: {} },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call_abc|item:123",
+          toolName: "read",
+          content: [{ type: "text", text: "one" }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call_abc|item:456",
+          toolName: "read",
+          content: [{ type: "text", text: "two" }],
+        },
+      ] as unknown as AgentMessage[];
+
+      const out = sanitizeToolCallIdsForCloudCodeAssist(input, "strict9");
+      expect(out).not.toBe(input);
+      const { aId, bId } = expectCollisionIdsRemainDistinct(out, "strict9");
+      expect(aId.length).toBe(9);
+      expect(bId.length).toBe(9);
+    });
   });
 });

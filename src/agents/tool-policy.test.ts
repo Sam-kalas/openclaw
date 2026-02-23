@@ -1,241 +1,202 @@
 import { describe, expect, it } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
+import { isToolAllowed, resolveSandboxToolPolicyForAgent } from "./sandbox/tool-policy.js";
+import type { SandboxToolPolicy } from "./sandbox/types.js";
+import { TOOL_POLICY_CONFORMANCE } from "./tool-policy.conformance.js";
 import {
-  normalizeToolName,
-  isOwnerOnlyToolName,
-  normalizeToolList,
+  applyOwnerOnlyToolPolicy,
   expandToolGroups,
-  collectExplicitAllowlist,
+  isOwnerOnlyToolName,
+  normalizeToolName,
   resolveToolProfilePolicy,
   TOOL_GROUPS,
-  buildPluginToolGroups,
-  expandPluginGroups,
-  expandPolicyWithPluginGroups,
-  stripPluginOnlyAllowlist,
 } from "./tool-policy.js";
+import type { AnyAgentTool } from "./tools/common.js";
 
-describe("normalizeToolName", () => {
-  it("lowercases and trims", () => {
-    expect(normalizeToolName("  Read  ")).toBe("read");
+function createOwnerPolicyTools() {
+  return [
+    {
+      name: "read",
+      // oxlint-disable-next-line typescript/no-explicit-any
+      execute: async () => ({ content: [], details: {} }) as any,
+    },
+    {
+      name: "cron",
+      ownerOnly: true,
+      // oxlint-disable-next-line typescript/no-explicit-any
+      execute: async () => ({ content: [], details: {} }) as any,
+    },
+    {
+      name: "gateway",
+      ownerOnly: true,
+      // oxlint-disable-next-line typescript/no-explicit-any
+      execute: async () => ({ content: [], details: {} }) as any,
+    },
+    {
+      name: "whatsapp_login",
+      // oxlint-disable-next-line typescript/no-explicit-any
+      execute: async () => ({ content: [], details: {} }) as any,
+    },
+  ] as unknown as AnyAgentTool[];
+}
+
+describe("tool-policy", () => {
+  it("expands groups and normalizes aliases", () => {
+    const expanded = expandToolGroups(["group:runtime", "BASH", "apply-patch", "group:fs"]);
+    const set = new Set(expanded);
+    expect(set.has("exec")).toBe(true);
+    expect(set.has("process")).toBe(true);
+    expect(set.has("bash")).toBe(false);
+    expect(set.has("apply_patch")).toBe(true);
+    expect(set.has("read")).toBe(true);
+    expect(set.has("write")).toBe(true);
+    expect(set.has("edit")).toBe(true);
   });
 
-  it("resolves bash alias to exec", () => {
-    expect(normalizeToolName("bash")).toBe("exec");
+  it("resolves known profiles and ignores unknown ones", () => {
+    const coding = resolveToolProfilePolicy("coding");
+    expect(coding?.allow).toContain("group:fs");
+    expect(resolveToolProfilePolicy("nope")).toBeUndefined();
   });
 
-  it("resolves apply-patch alias", () => {
+  it("includes core tool groups in group:openclaw", () => {
+    const group = TOOL_GROUPS["group:openclaw"];
+    expect(group).toContain("browser");
+    expect(group).toContain("message");
+    expect(group).toContain("subagents");
+    expect(group).toContain("session_status");
+  });
+
+  it("normalizes tool names and aliases", () => {
+    expect(normalizeToolName(" BASH ")).toBe("exec");
     expect(normalizeToolName("apply-patch")).toBe("apply_patch");
+    expect(normalizeToolName("READ")).toBe("read");
   });
 
-  it("passes through unknown names unchanged", () => {
-    expect(normalizeToolName("web_search")).toBe("web_search");
-  });
-});
-
-describe("isOwnerOnlyToolName", () => {
-  it("returns true for whatsapp_login", () => {
+  it("identifies owner-only tools", () => {
     expect(isOwnerOnlyToolName("whatsapp_login")).toBe(true);
-  });
-
-  it("is case-insensitive via normalizeToolName", () => {
-    expect(isOwnerOnlyToolName("WhatsApp_Login")).toBe(true);
-  });
-
-  it("returns false for regular tools", () => {
+    expect(isOwnerOnlyToolName("cron")).toBe(true);
+    expect(isOwnerOnlyToolName("gateway")).toBe(true);
     expect(isOwnerOnlyToolName("read")).toBe(false);
-    expect(isOwnerOnlyToolName("exec")).toBe(false);
-    expect(isOwnerOnlyToolName("web_search")).toBe(false);
-  });
-});
-
-describe("normalizeToolList", () => {
-  it("normalizes and filters empty entries", () => {
-    expect(normalizeToolList(["Read", "EXEC", ""])).toEqual(["read", "exec"]);
   });
 
-  it("returns empty array for undefined", () => {
-    expect(normalizeToolList(undefined)).toEqual([]);
+  it("strips owner-only tools for non-owner senders", async () => {
+    const tools = createOwnerPolicyTools();
+    const filtered = applyOwnerOnlyToolPolicy(tools, false);
+    expect(filtered.map((t) => t.name)).toEqual(["read"]);
   });
 
-  it("resolves aliases", () => {
-    expect(normalizeToolList(["bash", "apply-patch"])).toEqual(["exec", "apply_patch"]);
-  });
-});
-
-describe("expandToolGroups", () => {
-  it("expands group:web to web_search and web_fetch", () => {
-    const result = expandToolGroups(["group:web"]);
-    expect(result).toContain("web_search");
-    expect(result).toContain("web_fetch");
+  it("keeps owner-only tools for the owner sender", async () => {
+    const tools = createOwnerPolicyTools();
+    const filtered = applyOwnerOnlyToolPolicy(tools, true);
+    expect(filtered.map((t) => t.name)).toEqual(["read", "cron", "gateway", "whatsapp_login"]);
   });
 
-  it("expands group:fs to file tools", () => {
-    const result = expandToolGroups(["group:fs"]);
-    expect(result).toContain("read");
-    expect(result).toContain("write");
-    expect(result).toContain("edit");
-    expect(result).toContain("apply_patch");
-  });
-
-  it("passes through non-group entries", () => {
-    const result = expandToolGroups(["exec", "group:web"]);
-    expect(result).toContain("exec");
-    expect(result).toContain("web_search");
-  });
-
-  it("deduplicates results", () => {
-    const result = expandToolGroups(["web_search", "group:web"]);
-    const count = result.filter((t) => t === "web_search").length;
-    expect(count).toBe(1);
-  });
-
-  it("handles undefined input", () => {
-    expect(expandToolGroups(undefined)).toEqual([]);
-  });
-
-  it("expands group:runtime to exec and process", () => {
-    const result = expandToolGroups(["group:runtime"]);
-    expect(result).toEqual(["exec", "process"]);
-  });
-
-  it("expands group:memory", () => {
-    const result = expandToolGroups(["group:memory"]);
-    expect(result).toContain("memory_search");
-    expect(result).toContain("memory_get");
-  });
-});
-
-describe("collectExplicitAllowlist", () => {
-  it("collects allow entries from multiple policies", () => {
-    const result = collectExplicitAllowlist([{ allow: ["read", "write"] }, { allow: ["exec"] }]);
-    expect(result).toEqual(["read", "write", "exec"]);
-  });
-
-  it("skips undefined policies and policies without allow", () => {
-    const result = collectExplicitAllowlist([undefined, { deny: ["exec"] }, { allow: ["read"] }]);
-    expect(result).toEqual(["read"]);
-  });
-
-  it("trims and filters non-string entries", () => {
-    const result = collectExplicitAllowlist([{ allow: ["  read  ", "", 42 as any] }]);
-    expect(result).toEqual(["read"]);
-  });
-});
-
-describe("resolveToolProfilePolicy", () => {
-  it("returns undefined for unknown profile", () => {
-    expect(resolveToolProfilePolicy("nonexistent")).toBeUndefined();
-  });
-
-  it("returns undefined for undefined input", () => {
-    expect(resolveToolProfilePolicy(undefined)).toBeUndefined();
-  });
-
-  it("returns allow list for minimal profile", () => {
-    const result = resolveToolProfilePolicy("minimal");
-    expect(result).toBeDefined();
-    expect(result!.allow).toContain("session_status");
-  });
-
-  it("returns allow list for coding profile", () => {
-    const result = resolveToolProfilePolicy("coding");
-    expect(result).toBeDefined();
-    expect(result!.allow).toContain("group:fs");
-    expect(result!.allow).toContain("group:runtime");
-  });
-
-  it("returns undefined for full profile (no restrictions)", () => {
-    expect(resolveToolProfilePolicy("full")).toBeUndefined();
-  });
-
-  it("returns a copy of the policy (not the original reference)", () => {
-    const a = resolveToolProfilePolicy("minimal");
-    const b = resolveToolProfilePolicy("minimal");
-    expect(a).toEqual(b);
-    expect(a).not.toBe(b);
-  });
-});
-
-describe("TOOL_GROUPS", () => {
-  it("has expected groups defined", () => {
-    expect(TOOL_GROUPS).toHaveProperty("group:web");
-    expect(TOOL_GROUPS).toHaveProperty("group:fs");
-    expect(TOOL_GROUPS).toHaveProperty("group:runtime");
-    expect(TOOL_GROUPS).toHaveProperty("group:sessions");
-    expect(TOOL_GROUPS).toHaveProperty("group:openclaw");
-  });
-
-  it("group:openclaw contains core tools", () => {
-    const openclaw = TOOL_GROUPS["group:openclaw"];
-    expect(openclaw).toContain("browser");
-    expect(openclaw).toContain("web_search");
-    expect(openclaw).toContain("sessions_spawn");
-  });
-});
-
-describe("buildPluginToolGroups", () => {
-  it("groups tools by plugin id", () => {
+  it("honors ownerOnly metadata for custom tool names", async () => {
     const tools = [
-      { name: "plugin_a_read" },
-      { name: "plugin_a_write" },
-      { name: "plugin_b_search" },
-      { name: "core_tool" },
-    ];
-    const result = buildPluginToolGroups({
-      tools,
-      toolMeta: (tool) => {
-        if (tool.name.startsWith("plugin_a")) {
-          return { pluginId: "plugin-a" };
-        }
-        if (tool.name.startsWith("plugin_b")) {
-          return { pluginId: "plugin-b" };
-        }
-        return undefined;
+      {
+        name: "custom_admin_tool",
+        ownerOnly: true,
+        // oxlint-disable-next-line typescript/no-explicit-any
+        execute: async () => ({ content: [], details: {} }) as any,
       },
-    });
-    expect(result.all).toEqual(["plugin_a_read", "plugin_a_write", "plugin_b_search"]);
-    expect(result.byPlugin.get("plugin-a")).toEqual(["plugin_a_read", "plugin_a_write"]);
-    expect(result.byPlugin.get("plugin-b")).toEqual(["plugin_b_search"]);
-  });
-
-  it("returns empty groups when no plugin tools", () => {
-    const result = buildPluginToolGroups({
-      tools: [{ name: "read" }],
-      toolMeta: () => undefined,
-    });
-    expect(result.all).toEqual([]);
-    expect(result.byPlugin.size).toBe(0);
+    ] as unknown as AnyAgentTool[];
+    expect(applyOwnerOnlyToolPolicy(tools, false)).toEqual([]);
+    expect(applyOwnerOnlyToolPolicy(tools, true)).toHaveLength(1);
   });
 });
 
-describe("expandPluginGroups", () => {
-  const groups = {
-    all: ["p_read", "p_write", "q_search"],
-    byPlugin: new Map([
-      ["myplugin", ["p_read", "p_write"]],
-      ["other", ["q_search"]],
-    ]),
-  };
-
-  it("expands group:plugins to all plugin tools", () => {
-    const result = expandPluginGroups(["group:plugins"], groups);
-    expect(result).toContain("p_read");
-    expect(result).toContain("p_write");
-    expect(result).toContain("q_search");
+describe("TOOL_POLICY_CONFORMANCE", () => {
+  it("matches exported TOOL_GROUPS exactly", () => {
+    expect(TOOL_POLICY_CONFORMANCE.toolGroups).toEqual(TOOL_GROUPS);
   });
 
-  it("expands plugin id to its tools", () => {
-    const result = expandPluginGroups(["myplugin"], groups);
-    expect(result).toEqual(["p_read", "p_write"]);
+  it("is JSON-serializable", () => {
+    expect(() => JSON.stringify(TOOL_POLICY_CONFORMANCE)).not.toThrow();
+  });
+});
+
+describe("sandbox tool policy", () => {
+  it("allows all tools with * allow", () => {
+    const policy: SandboxToolPolicy = { allow: ["*"], deny: [] };
+    expect(isToolAllowed(policy, "browser")).toBe(true);
   });
 
-  it("passes through non-plugin entries", () => {
-    const result = expandPluginGroups(["exec", "myplugin"], groups);
-    expect(result).toContain("exec");
-    expect(result).toContain("p_read");
+  it("denies all tools with * deny", () => {
+    const policy: SandboxToolPolicy = { allow: [], deny: ["*"] };
+    expect(isToolAllowed(policy, "read")).toBe(false);
   });
 
-  it("returns undefined/empty for undefined input", () => {
-    expect(expandPluginGroups(undefined, groups)).toBeUndefined();
-    expect(expandPluginGroups([], groups)).toEqual([]);
+  it("supports wildcard patterns", () => {
+    const policy: SandboxToolPolicy = { allow: ["web_*"] };
+    expect(isToolAllowed(policy, "web_fetch")).toBe(true);
+    expect(isToolAllowed(policy, "read")).toBe(false);
+  });
+
+  it("applies deny before allow", () => {
+    const policy: SandboxToolPolicy = { allow: ["*"], deny: ["web_*"] };
+    expect(isToolAllowed(policy, "web_fetch")).toBe(false);
+    expect(isToolAllowed(policy, "read")).toBe(true);
+  });
+
+  it("treats empty allowlist as allow-all (with deny exceptions)", () => {
+    const policy: SandboxToolPolicy = { allow: [], deny: ["web_*"] };
+    expect(isToolAllowed(policy, "web_fetch")).toBe(false);
+    expect(isToolAllowed(policy, "read")).toBe(true);
+  });
+
+  it("expands tool groups + aliases in patterns", () => {
+    const policy: SandboxToolPolicy = {
+      allow: ["group:fs", "BASH"],
+      deny: ["apply_*"],
+    };
+    expect(isToolAllowed(policy, "read")).toBe(true);
+    expect(isToolAllowed(policy, "exec")).toBe(true);
+    expect(isToolAllowed(policy, "apply_patch")).toBe(false);
+  });
+
+  it("normalizes whitespace + case", () => {
+    const policy: SandboxToolPolicy = { allow: [" WEB_* "] };
+    expect(isToolAllowed(policy, "WEB_FETCH")).toBe(true);
+  });
+});
+
+describe("resolveSandboxToolPolicyForAgent", () => {
+  it("keeps allow-all semantics when allow is []", () => {
+    const cfg = {
+      tools: { sandbox: { tools: { allow: [], deny: ["browser"] } } },
+    } as unknown as OpenClawConfig;
+
+    const resolved = resolveSandboxToolPolicyForAgent(cfg, undefined);
+    expect(resolved.sources.allow).toEqual({
+      source: "global",
+      key: "tools.sandbox.tools.allow",
+    });
+    expect(resolved.allow).toEqual([]);
+    expect(resolved.deny).toEqual(["browser"]);
+
+    const policy: SandboxToolPolicy = { allow: resolved.allow, deny: resolved.deny };
+    expect(isToolAllowed(policy, "read")).toBe(true);
+    expect(isToolAllowed(policy, "browser")).toBe(false);
+  });
+
+  it("auto-adds image to explicit allowlists unless denied", () => {
+    const cfg = {
+      tools: { sandbox: { tools: { allow: ["read"], deny: ["browser"] } } },
+    } as unknown as OpenClawConfig;
+
+    const resolved = resolveSandboxToolPolicyForAgent(cfg, undefined);
+    expect(resolved.allow).toEqual(["read", "image"]);
+    expect(resolved.deny).toEqual(["browser"]);
+  });
+
+  it("does not auto-add image when explicitly denied", () => {
+    const cfg = {
+      tools: { sandbox: { tools: { allow: ["read"], deny: ["image"] } } },
+    } as unknown as OpenClawConfig;
+
+    const resolved = resolveSandboxToolPolicyForAgent(cfg, undefined);
+    expect(resolved.allow).toEqual(["read"]);
+    expect(resolved.deny).toEqual(["image"]);
   });
 });

@@ -1,14 +1,14 @@
 import type { RequestClient } from "@buape/carbon";
+import { resolveAgentAvatar } from "../../agents/identity-avatar.js";
 import type { ChunkMode } from "../../auto-reply/chunk.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
-import type { MarkdownTableMode, ReplyToMode } from "../../config/types.base.js";
-import type { RuntimeEnv } from "../../runtime.js";
-import type { ThreadBindingManager, ThreadBindingRecord } from "./thread-bindings.js";
-import { resolveAgentAvatar } from "../../agents/identity-avatar.js";
 import { loadConfig } from "../../config/config.js";
+import type { MarkdownTableMode, ReplyToMode } from "../../config/types.base.js";
 import { convertMarkdownTables } from "../../markdown/tables.js";
+import type { RuntimeEnv } from "../../runtime.js";
 import { chunkDiscordTextWithMode } from "../chunk.js";
 import { sendMessageDiscord, sendVoiceMessageDiscord, sendWebhookMessageDiscord } from "../send.js";
+import type { ThreadBindingManager, ThreadBindingRecord } from "./thread-bindings.js";
 
 function resolveTargetChannelId(target: string): string | undefined {
   if (!target.startsWith("channel:")) {
@@ -98,6 +98,26 @@ async function sendDiscordChunkWithFallback(params: {
     accountId: params.accountId,
     replyTo: params.replyTo,
   });
+}
+
+async function sendAdditionalDiscordMedia(params: {
+  target: string;
+  token: string;
+  rest?: RequestClient;
+  accountId?: string;
+  mediaUrls: string[];
+  resolveReplyTo: () => string | undefined;
+}) {
+  for (const mediaUrl of params.mediaUrls) {
+    const replyTo = params.resolveReplyTo();
+    await sendMessageDiscord(params.target, "", {
+      token: params.token,
+      rest: params.rest,
+      mediaUrl,
+      accountId: params.accountId,
+      replyTo,
+    });
+  }
 }
 
 export async function deliverDiscordReply(params: {
@@ -206,16 +226,14 @@ export async function deliverDiscordReply(params: {
         avatarUrl: persona.avatarUrl,
       });
       // Additional media items are sent as regular attachments (voice is single-file only).
-      for (const extra of mediaList.slice(1)) {
-        const replyTo = resolveReplyTo();
-        await sendMessageDiscord(params.target, "", {
-          token: params.token,
-          rest: params.rest,
-          mediaUrl: extra,
-          accountId: params.accountId,
-          replyTo,
-        });
-      }
+      await sendAdditionalDiscordMedia({
+        target: params.target,
+        token: params.token,
+        rest: params.rest,
+        accountId: params.accountId,
+        mediaUrls: mediaList.slice(1),
+        resolveReplyTo,
+      });
       continue;
     }
 
@@ -227,15 +245,13 @@ export async function deliverDiscordReply(params: {
       accountId: params.accountId,
       replyTo,
     });
-    for (const extra of mediaList.slice(1)) {
-      const replyTo = resolveReplyTo();
-      await sendMessageDiscord(params.target, "", {
-        token: params.token,
-        rest: params.rest,
-        mediaUrl: extra,
-        accountId: params.accountId,
-        replyTo,
-      });
-    }
+    await sendAdditionalDiscordMedia({
+      target: params.target,
+      token: params.token,
+      rest: params.rest,
+      accountId: params.accountId,
+      mediaUrls: mediaList.slice(1),
+      resolveReplyTo,
+    });
   }
 }

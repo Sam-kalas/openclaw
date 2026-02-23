@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import type { SandboxBrowserContext, SandboxConfig } from "./types.js";
 import { startBrowserBridgeServer, stopBrowserBridgeServer } from "../../browser/bridge-server.js";
 import { type ResolvedBrowserConfig, resolveProfile } from "../../browser/config.js";
 import {
@@ -36,6 +35,7 @@ import {
 import { readBrowserRegistry, updateBrowserRegistry } from "./registry.js";
 import { resolveSandboxAgentId, slugifySessionKey } from "./shared.js";
 import { isToolAllowed } from "./tool-policy.js";
+import type { SandboxBrowserContext, SandboxConfig } from "./types.js";
 
 const HOT_BROWSER_WINDOW_MS = 5 * 60 * 1000;
 const CDP_SOURCE_RANGE_ENV_KEY = "OPENCLAW_BROWSER_CDP_SOURCE_RANGE";
@@ -227,6 +227,7 @@ export async function ensureSandboxBrowser(params: {
         "openclaw.browserConfigEpoch": SANDBOX_BROWSER_SECURITY_HASH_EPOCH,
       },
       configHash: expectedHash,
+      includeBinds: false,
     });
     const mainMountSuffix =
       params.cfg.workspaceAccess === "ro" && params.workspaceDir === params.agentWorkspaceDir
@@ -239,6 +240,11 @@ export async function ensureSandboxBrowser(params: {
         "-v",
         `${params.agentWorkspaceDir}:${SANDBOX_AGENT_WORKSPACE_MOUNT}${agentMountSuffix}`,
       );
+    }
+    if (browserDockerCfg.binds?.length) {
+      for (const bind of browserDockerCfg.binds) {
+        args.push("-v", bind);
+      }
     }
     args.push("-p", `127.0.0.1::${params.cfg.browser.cdpPort}`);
     if (noVncEnabled) {

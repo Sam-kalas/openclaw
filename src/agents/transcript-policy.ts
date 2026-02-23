@@ -1,6 +1,6 @@
-import type { ToolCallIdMode } from "./tool-call-id.js";
 import { normalizeProviderId } from "./model-selection.js";
 import { isAntigravityClaude, isGoogleModelApi } from "./pi-embedded-helpers/google.js";
+import type { ToolCallIdMode } from "./tool-call-id.js";
 
 export type TranscriptSanitizeMode = "full" | "images-only";
 
@@ -110,9 +110,8 @@ export function resolveTranscriptPolicy(params: {
       ? "strict"
       : undefined;
   const repairToolUseResultPairing = isGoogle || isAnthropic;
-  const sanitizeThoughtSignatures = isOpenRouterGemini
-    ? { allowBase64Only: true, includeCamelCase: true }
-    : undefined;
+  const sanitizeThoughtSignatures =
+    isOpenRouterGemini || isGoogle ? { allowBase64Only: true, includeCamelCase: true } : undefined;
   const sanitizeThinkingSignatures = isAntigravityClaudeModel;
 
   return {

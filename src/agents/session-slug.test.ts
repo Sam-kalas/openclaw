@@ -1,48 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionSlug } from "./session-slug.js";
 
-describe("createSessionSlug", () => {
-  it("returns a string", () => {
+describe("session slug", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("generates a two-word slug by default", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
     const slug = createSessionSlug();
-    expect(typeof slug).toBe("string");
-    expect(slug.length).toBeGreaterThan(0);
+    expect(slug).toBe("amber-atlas");
   });
 
-  it("returns adjective-noun format", () => {
-    const slug = createSessionSlug();
-    expect(slug.split("-").length).toBeGreaterThanOrEqual(2);
+  it("adds a numeric suffix when the base slug is taken", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const slug = createSessionSlug((id) => id === "amber-atlas");
+    expect(slug).toBe("amber-atlas-2");
   });
 
-  it("avoids taken slugs by appending suffix", () => {
-    const taken = new Set<string>();
-    for (let i = 0; i < 20; i++) {
-      const slug = createSessionSlug((id) => taken.has(id));
-      expect(taken.has(slug)).toBe(false);
-      taken.add(slug);
-    }
-  });
-
-  it("never returns the same slug when isTaken rejects it", () => {
-    const slugs = new Set<string>();
-    let calls = 0;
-    const isTaken = (id: string) => {
-      calls++;
-      if (calls <= 3) {
-        return true;
-      }
-      return slugs.has(id);
-    };
-    const slug = createSessionSlug(isTaken);
-    expect(slug).toBeTruthy();
-  });
-
-  it("falls back to 3-word slugs when 2-word space is exhausted", () => {
-    let attempts = 0;
-    const slug = createSessionSlug(() => {
-      attempts++;
-      return attempts < 200;
-    });
-    expect(slug).toBeTruthy();
-    expect(slug.length).toBeGreaterThan(0);
+  it("falls back to three words when collisions persist", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const slug = createSessionSlug((id) => /^amber-atlas(-\d+)?$/.test(id));
+    expect(slug).toBe("amber-atlas-atlas");
   });
 });

@@ -1,6 +1,5 @@
 import { resolveFetch } from "../infra/fetch.js";
 import { resolveRetryConfig, retryAsync, type RetryConfig } from "../infra/retry.js";
-import { logWarn } from "../logger.js";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const DISCORD_API_RETRY_DEFAULTS = {
@@ -132,11 +131,6 @@ export async function fetchDiscord<T>(
         err instanceof DiscordApiError && typeof err.retryAfter === "number"
           ? err.retryAfter * 1000
           : undefined,
-      onRetry: (info) => {
-        logWarn(
-          `discord: API ${path} rate limited, retry ${info.attempt}/${Math.max(1, info.maxAttempts - 1)} in ${info.delayMs}ms`,
-        );
-      },
     },
   );
 }
