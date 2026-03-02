@@ -1,7 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, FileOperations } from "@mariozechner/pi-coding-agent";
+import fs from "node:fs";
+import path from "node:path";
 import { extractSections } from "../../auto-reply/reply/post-compaction-context.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
@@ -212,6 +212,10 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
     // Model resolution: ctx.model is undefined in compact.ts workflow (extensionRunner.initialize() is never called).
     // Fall back to runtime.model which is explicitly passed when building extension paths.
     const runtime = getCompactionSafeguardRuntime(ctx.sessionManager);
+    const summarizationInstructions = {
+      identifierPolicy: runtime?.identifierPolicy,
+      identifierInstructions: runtime?.identifierInstructions,
+    };
     const model = ctx.model ?? runtime?.model;
     if (!model) {
       // Log warning once per session when both models are missing (diagnostic for future issues).
@@ -295,6 +299,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                   maxChunkTokens: droppedMaxChunkTokens,
                   contextWindow: contextWindowTokens,
                   customInstructions,
+                  summarizationInstructions,
                   previousSummary: preparation.previousSummary,
                 });
               } catch (droppedError) {
@@ -333,6 +338,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         maxChunkTokens,
         contextWindow: contextWindowTokens,
         customInstructions,
+        summarizationInstructions,
         previousSummary: effectivePreviousSummary,
       });
 
@@ -347,6 +353,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           maxChunkTokens,
           contextWindow: contextWindowTokens,
           customInstructions: TURN_PREFIX_INSTRUCTIONS,
+          summarizationInstructions,
           previousSummary: undefined,
         });
         summary = `${historySummary}\n\n---\n\n**Turn Context (split turn):**\n\n${prefixSummary}`;

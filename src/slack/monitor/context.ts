@@ -1,16 +1,16 @@
 import type { App } from "@slack/bolt";
 import type { HistoryEntry } from "../../auto-reply/reply/history.js";
-import { formatAllowlistMatchMeta } from "../../channels/allowlist-match.js";
 import type { OpenClawConfig, SlackReactionNotificationMode } from "../../config/config.js";
-import { resolveSessionKey, type SessionScope } from "../../config/sessions.js";
 import type { DmPolicy, GroupPolicy } from "../../config/types.js";
+import type { RuntimeEnv } from "../../runtime.js";
+import type { SlackMessageEvent } from "../types.js";
+import type { SlackChannelConfigEntries } from "./channel-config.js";
+import { formatAllowlistMatchMeta } from "../../channels/allowlist-match.js";
+import { resolveSessionKey, type SessionScope } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { createDedupeCache } from "../../infra/dedupe.js";
 import { getChildLogger } from "../../logging.js";
-import type { RuntimeEnv } from "../../runtime.js";
-import type { SlackMessageEvent } from "../types.js";
 import { normalizeAllowList, normalizeAllowListLower, normalizeSlackSlug } from "./allow-list.js";
-import type { SlackChannelConfigEntries } from "./channel-config.js";
 import { resolveSlackChannelConfig } from "./channel-config.js";
 import { isSlackChannelAllowedByPolicy } from "./policy.js";
 
@@ -365,9 +365,18 @@ export function createSlackMonitorContext(params: {
     if (!body || typeof body !== "object") {
       return false;
     }
-    const raw = body as { api_app_id?: unknown; team_id?: unknown };
+    const raw = body as {
+      api_app_id?: unknown;
+      team_id?: unknown;
+      team?: { id?: unknown };
+    };
     const incomingApiAppId = typeof raw.api_app_id === "string" ? raw.api_app_id : "";
-    const incomingTeamId = typeof raw.team_id === "string" ? raw.team_id : "";
+    const incomingTeamId =
+      typeof raw.team_id === "string"
+        ? raw.team_id
+        : typeof raw.team?.id === "string"
+          ? raw.team.id
+          : "";
 
     if (params.apiAppId && incomingApiAppId && incomingApiAppId !== params.apiAppId) {
       logVerbose(

@@ -11,7 +11,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 import type { ReplyPayload } from "../auto-reply/types.js";
-import { normalizeChannelId } from "../channels/plugins/index.js";
 import type { ChannelId } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type {
@@ -21,6 +20,7 @@ import type {
   TtsProvider,
   TtsModelOverrideConfig,
 } from "../config/types.tts.js";
+import { normalizeChannelId } from "../channels/plugins/index.js";
 import { logVerbose } from "../globals.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { stripMarkdown } from "../line/markdown-to-line.js";
@@ -480,8 +480,11 @@ export function setLastTtsAttempt(entry: TtsStatusEntry | undefined): void {
   lastTtsAttempt = entry;
 }
 
+/** Channels that require opus audio and support voice-bubble playback */
+const VOICE_BUBBLE_CHANNELS = new Set(["telegram", "feishu", "whatsapp"]);
+
 function resolveOutputFormat(channelId?: string | null) {
-  if (channelId === "telegram") {
+  if (channelId && VOICE_BUBBLE_CHANNELS.has(channelId)) {
     return TELEGRAM_OUTPUT;
   }
   return DEFAULT_OUTPUT;
@@ -911,7 +914,8 @@ export async function maybeApplyTtsToPayload(params: {
     };
 
     const channelId = resolveChannelId(params.channel);
-    const shouldVoice = channelId === "telegram" && result.voiceCompatible === true;
+    const shouldVoice =
+      channelId !== null && VOICE_BUBBLE_CHANNELS.has(channelId) && result.voiceCompatible === true;
     const finalPayload = {
       ...nextPayload,
       mediaUrl: result.audioPath,

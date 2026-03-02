@@ -1,8 +1,8 @@
+import type { Mock } from "vitest";
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { Mock } from "vitest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { logWarnMock, logDebugMock, logInfoMock } = vi.hoisted(() => ({
@@ -1759,6 +1759,25 @@ describe("QmdMemoryManager", () => {
     } finally {
       setTimeoutSpy.mockRestore();
     }
+  });
+
+  it("succeeds on qmd update even when stdout exceeds the output cap", async () => {
+    // Regression test for #24966: large indexes produce >200K chars of stdout
+    // during `qmd update`, which used to fail with "produced too much output".
+    const largeOutput = "x".repeat(300_000);
+    spawnMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "update") {
+        const child = createMockChild({ autoClose: false });
+        emitAndClose(child, "stdout", largeOutput);
+        return child;
+      }
+      return createMockChild();
+    });
+
+    const { manager } = await createManager({ mode: "status" });
+    // sync triggers runQmdUpdateOnce -> runQmd(["update"], { discardOutput: true })
+    await expect(manager.sync({ reason: "manual" })).resolves.toBeUndefined();
+    await manager.close();
   });
 
   it("scopes by channel for agent-prefixed session keys", async () => {

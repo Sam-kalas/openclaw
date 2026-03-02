@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../config/config.js";
+import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
 import {
   addSubagentRunForTests,
   resetSubagentRegistryForTests,
 } from "../../agents/subagent-registry.js";
-import type { OpenClawConfig } from "../../config/config.js";
-import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
 import { installSubagentsCommandCoreMocks } from "./commands-subagents.test-mocks.js";
 
 const hoisted = vi.hoisted(() => {
@@ -112,7 +112,8 @@ function createFakeThreadBindingManager(initialBindings: FakeBinding[] = []) {
   );
 
   const manager = {
-    getSessionTtlMs: vi.fn(() => 24 * 60 * 60 * 1000),
+    getIdleTimeoutMs: vi.fn(() => 24 * 60 * 60 * 1000),
+    getMaxAgeMs: vi.fn(() => 0),
     getByThreadId: vi.fn((threadId: string) => byThread.get(threadId)),
     listBySessionKey: vi.fn((targetSessionKey: string) =>
       [...byThread.values()].filter((binding) => binding.targetSessionKey === targetSessionKey),
@@ -286,7 +287,7 @@ describe("/focus, /unfocus, /agents", () => {
         targetSessionKey: "agent:codex-acp:session-1",
         metadata: expect.objectContaining({
           introText:
-            "⚙️ codex-acp session active (auto-unfocus in 24h). Messages here go directly to this session.",
+            "⚙️ codex-acp session active (idle auto-unfocus after 24h inactivity). Messages here go directly to this session.",
         }),
       }),
     );

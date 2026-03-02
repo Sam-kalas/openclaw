@@ -1,9 +1,9 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../config/config.js";
 import { signalOutbound } from "../../channels/plugins/outbound/signal.js";
 import { telegramOutbound } from "../../channels/plugins/outbound/telegram.js";
 import { whatsappOutbound } from "../../channels/plugins/outbound/whatsapp.js";
-import type { OpenClawConfig } from "../../config/config.js";
 import { STATE_DIR } from "../../config/paths.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { markdownToSignalTextChunks } from "../../signal/format.js";
@@ -158,6 +158,30 @@ describe("deliverOutboundPayloads", () => {
       expect(results).toHaveLength(2);
       expect(results[0]).toMatchObject({ channel: "telegram", chatId: "c1" });
     });
+  });
+
+  it("clamps telegram text chunk size to protocol max even with higher config", async () => {
+    const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", chatId: "c1" });
+    const cfg: OpenClawConfig = {
+      channels: { telegram: { botToken: "tok-1", textChunkLimit: 10_000 } },
+    };
+    const text = "<".repeat(3_000);
+    await withEnvAsync({ TELEGRAM_BOT_TOKEN: "" }, async () => {
+      await deliverOutboundPayloads({
+        cfg,
+        channel: "telegram",
+        to: "123",
+        payloads: [{ text }],
+        deps: { sendTelegram },
+      });
+    });
+
+    expect(sendTelegram.mock.calls.length).toBeGreaterThan(1);
+    const sentHtmlChunks = sendTelegram.mock.calls
+      .map((call) => call[1])
+      .filter((message): message is string => typeof message === "string");
+    expect(sentHtmlChunks.length).toBeGreaterThan(1);
+    expect(sentHtmlChunks.every((message) => message.length <= 4096)).toBe(true);
   });
 
   it("keeps payload replyToId across all chunked telegram sends", async () => {

@@ -1,6 +1,18 @@
 import type { Bot, Context } from "grammy";
-import { resolveChunkMode } from "../auto-reply/chunk.js";
 import type { CommandArgs } from "../auto-reply/commands-registry.js";
+import type { OpenClawConfig } from "../config/config.js";
+import type { ChannelGroupPolicy } from "../config/group-policy.js";
+import type {
+  ReplyToMode,
+  TelegramAccountConfig,
+  TelegramDirectConfig,
+  TelegramGroupConfig,
+  TelegramTopicConfig,
+} from "../config/types.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type { TelegramMediaRef } from "./bot-message-context.js";
+import type { TelegramContext } from "./bot/types.js";
+import { resolveChunkMode } from "../auto-reply/chunk.js";
 import {
   buildCommandTextFromArgs,
   findCommandByNativeName,
@@ -14,8 +26,6 @@ import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/pr
 import { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
 import { resolveCommandAuthorizedFromAuthorizers } from "../channels/command-gating.js";
 import { createReplyPrefixOptions } from "../channels/reply-prefix.js";
-import type { OpenClawConfig } from "../config/config.js";
-import type { ChannelGroupPolicy } from "../config/group-policy.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
 import { recordSessionMetaFromInbound, resolveStorePath } from "../config/sessions.js";
 import {
@@ -23,12 +33,6 @@ import {
   resolveTelegramCustomCommands,
   TELEGRAM_COMMAND_NAME_PATTERN,
 } from "../config/telegram-custom-commands.js";
-import type {
-  ReplyToMode,
-  TelegramAccountConfig,
-  TelegramGroupConfig,
-  TelegramTopicConfig,
-} from "../config/types.js";
 import { danger, logVerbose } from "../globals.js";
 import { getChildLogger } from "../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../media/local-roots.js";
@@ -39,7 +43,6 @@ import {
 } from "../plugins/commands.js";
 import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { withTelegramApiErrorLogging } from "./api-logging.js";
 import { isSenderAllowed, normalizeDmAllowFromWithStore } from "./bot-access.js";
 import {
@@ -59,7 +62,6 @@ import {
   resolveTelegramGroupAllowFromContext,
   resolveTelegramThreadSpec,
 } from "./bot/helpers.js";
-import type { TelegramContext } from "./bot/types.js";
 import {
   evaluateTelegramGroupBaseAccess,
   evaluateTelegramGroupPolicyAccess,
@@ -101,12 +103,13 @@ export type RegisterTelegramHandlerParams = {
   shouldSkipUpdate: (ctx: TelegramUpdateKeyContext) => boolean;
   processMessage: (
     ctx: TelegramContext,
-    allMedia: Array<{ path: string; contentType?: string }>,
+    allMedia: TelegramMediaRef[],
     storeAllowFrom: string[],
     options?: {
       messageIdOverride?: string;
       forceWasMentioned?: boolean;
     },
+    replyMedia?: TelegramMediaRef[],
   ) => Promise<void>;
   logger: ReturnType<typeof getChildLogger>;
 };
@@ -170,6 +173,7 @@ async function resolveTelegramCommandAuth(params: {
   const groupAllowContext = await resolveTelegramGroupAllowFromContext({
     chatId,
     accountId,
+    isGroup,
     isForum,
     messageThreadId,
     groupAllowFrom,
@@ -177,12 +181,26 @@ async function resolveTelegramCommandAuth(params: {
   });
   const {
     resolvedThreadId,
+    dmThreadId,
     storeAllowFrom,
     groupConfig,
     topicConfig,
+    groupAllowOverride,
     effectiveGroupAllow,
     hasGroupAllowOverride,
   } = groupAllowContext;
+  // Use direct config dmPolicy override if available for DMs
+  const effectiveDmPolicy =
+    !isGroup && groupConfig && "dmPolicy" in groupConfig
+      ? (groupConfig.dmPolicy ?? telegramCfg.dmPolicy ?? "pairing")
+      : (telegramCfg.dmPolicy ?? "pairing");
+  const requireTopic = (groupConfig as TelegramDirectConfig | undefined)?.requireTopic;
+  if (!isGroup && requireTopic === true && dmThreadId == null) {
+    logVerbose(`Blocked telegram command in DM ${chatId}: requireTopic=true but no topic present`);
+    return null;
+  }
+  // For DMs, prefer per-DM/topic allowFrom (groupAllowOverride) over account-level allowFrom
+  const dmAllowFrom = groupAllowOverride ?? allowFrom;
   const senderId = msg.from?.id ? String(msg.from.id) : "";
   const senderUsername = msg.from?.username ?? "";
 
@@ -252,9 +270,9 @@ async function resolveTelegramCommandAuth(params: {
   }
 
   const dmAllow = normalizeDmAllowFromWithStore({
-    allowFrom: allowFrom,
+    allowFrom: dmAllowFrom,
     storeAllowFrom: isGroup ? [] : storeAllowFrom,
-    dmPolicy: telegramCfg.dmPolicy ?? "pairing",
+    dmPolicy: effectiveDmPolicy,
   });
   const senderAllowed = isSenderAllowed({
     allow: dmAllow,
@@ -549,7 +567,7 @@ export const registerTelegramNativeCommands = ({
             dmThreadId != null
               ? resolveThreadSessionKeys({
                   baseSessionKey,
-                  threadId: String(dmThreadId),
+                  threadId: `${chatId}:${dmThreadId}`,
                 })
               : null;
           const sessionKey = threadKeys?.sessionKey ?? baseSessionKey;
@@ -573,7 +591,7 @@ export const registerTelegramNativeCommands = ({
             ChatType: isGroup ? "group" : "direct",
             ConversationLabel: conversationLabel,
             GroupSubject: isGroup ? (msg.chat.title ?? undefined) : undefined,
-            GroupSystemPrompt: isGroup ? groupSystemPrompt : undefined,
+            GroupSystemPrompt: isGroup || (!isGroup && groupConfig) ? groupSystemPrompt : undefined,
             SenderName: buildSenderName(msg),
             SenderId: senderId || undefined,
             SenderUsername: senderUsername || undefined,

@@ -1,4 +1,8 @@
 import fs from "node:fs";
+import type { TypingMode } from "../../config/types.js";
+import type { OriginatingChannelType, TemplateContext } from "../templating.js";
+import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import type { TypingController } from "./typing.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
@@ -14,7 +18,6 @@ import {
   updateSessionStore,
   updateSessionStoreEntry,
 } from "../../config/sessions.js";
-import type { TypingMode } from "../../config/types.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { generateSecureUuid } from "../../infra/secure-random.js";
@@ -26,9 +29,7 @@ import {
   buildFallbackNotice,
   resolveFallbackTransition,
 } from "../fallback-state.js";
-import type { OriginatingChannelType, TemplateContext } from "../templating.js";
 import { resolveResponseUsageMode, type VerboseLevel } from "../thinking.js";
-import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { runAgentTurnWithFallback } from "./agent-runner-execution.js";
 import {
   createShouldEmitToolOutput,
@@ -44,19 +45,12 @@ import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-repl
 import { resolveEffectiveBlockStreamingConfig } from "./block-streaming.js";
 import { createFollowupRunner } from "./followup-runner.js";
 import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-routing.js";
-import {
-  auditPostCompactionReads,
-  extractReadPaths,
-  formatAuditWarning,
-  readSessionMessages,
-} from "./post-compaction-audit.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import { enqueueFollowupRun, type FollowupRun, type QueueSettings } from "./queue.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
 import { createTypingSignaler } from "./typing-mode.js";
-import type { TypingController } from "./typing.js";
 
 const BLOCK_REPLY_SEND_TIMEOUT_MS = 15_000;
 const UNSCHEDULED_REMINDER_NOTE =
@@ -94,9 +88,6 @@ function appendUnscheduledReminderNote(payloads: ReplyPayload[]): ReplyPayload[]
     };
   });
 }
-
-// Track sessions pending post-compaction read audit (Layer 3)
-const pendingPostCompactionAudits = new Map<string, boolean>();
 
 export async function runReplyAgent(params: {
   commandBody: string;
@@ -260,6 +251,7 @@ export async function runReplyAgent(params: {
   activeSessionEntry = await runMemoryFlushIfNeeded({
     cfg,
     followupRun,
+    promptForEstimate: followupRun.prompt,
     sessionCtx,
     opts,
     defaultModel,
@@ -613,7 +605,7 @@ export async function runReplyAgent(params: {
         costConfig,
       });
       if (formatted && responseUsageMode === "full" && sessionKey) {
-        formatted = `${formatted} · session ${sessionKey}`;
+        formatted = `${formatted} · session \`${sessionKey}\``;
       }
       if (formatted) {
         responseUsageLine = formatted;
@@ -704,9 +696,6 @@ export async function runReplyAgent(params: {
           .catch(() => {
             // Silent failure — post-compaction context is best-effort
           });
-
-        // Set pending audit flag for Layer 3 (post-compaction read audit)
-        pendingPostCompactionAudits.set(sessionKey, true);
       }
 
       if (verboseEnabled) {
@@ -721,30 +710,16 @@ export async function runReplyAgent(params: {
       finalPayloads = appendUsageLine(finalPayloads, responseUsageLine);
     }
 
-    // Post-compaction read audit (Layer 3)
-    if (sessionKey && pendingPostCompactionAudits.get(sessionKey)) {
-      pendingPostCompactionAudits.delete(sessionKey); // Delete FIRST — one-shot only
-      try {
-        const sessionFile = activeSessionEntry?.sessionFile;
-        if (sessionFile) {
-          const messages = readSessionMessages(sessionFile);
-          const readPaths = extractReadPaths(messages);
-          const workspaceDir = process.cwd();
-          const audit = auditPostCompactionReads(readPaths, workspaceDir);
-          if (!audit.passed) {
-            enqueueSystemEvent(formatAuditWarning(audit.missingPatterns), { sessionKey });
-          }
-        }
-      } catch {
-        // Silent failure — audit is best-effort
-      }
-    }
-
     return finalizeWithFollowup(
       finalPayloads.length === 1 ? finalPayloads[0] : finalPayloads,
       queueKey,
       runFollowupTurn,
     );
+  } catch (error) {
+    // Keep the followup queue moving even when an unexpected exception escapes
+    // the run path; the caller still receives the original error.
+    finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
+    throw error;
   } finally {
     blockReplyPipeline?.stop();
     typing.markRunComplete();

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { OpenClawConfig } from "../../../config/config.js";
+import type { SessionAcpMeta } from "../../../config/sessions/types.js";
+import type { CommandHandlerResult, HandleCommandsParams } from "../commands-types.js";
 import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import {
   cleanupFailedAcpSpawn,
@@ -22,17 +25,15 @@ import {
 import {
   formatThreadBindingDisabledError,
   formatThreadBindingSpawnDisabledError,
-  resolveThreadBindingSessionTtlMsForChannel,
+  resolveThreadBindingIdleTimeoutMsForChannel,
+  resolveThreadBindingMaxAgeMsForChannel,
   resolveThreadBindingSpawnPolicy,
 } from "../../../channels/thread-bindings-policy.js";
-import type { OpenClawConfig } from "../../../config/config.js";
-import type { SessionAcpMeta } from "../../../config/sessions/types.js";
 import { callGateway } from "../../../gateway/call.js";
 import {
   getSessionBindingService,
   type SessionBindingRecord,
 } from "../../../infra/outbound/session-binding-service.js";
-import type { CommandHandlerResult, HandleCommandsParams } from "../commands-types.js";
 import {
   resolveAcpCommandAccountId,
   resolveAcpCommandBindingContext,
@@ -196,7 +197,12 @@ async function bindSpawnedAcpSessionToThread(params: {
         introText: resolveThreadBindingIntroText({
           agentId: params.agentId,
           label,
-          sessionTtlMs: resolveThreadBindingSessionTtlMsForChannel({
+          idleTimeoutMs: resolveThreadBindingIdleTimeoutMsForChannel({
+            cfg: commandParams.cfg,
+            channel: spawnPolicy.channel,
+            accountId: spawnPolicy.accountId,
+          }),
+          maxAgeMs: resolveThreadBindingMaxAgeMsForChannel({
             cfg: commandParams.cfg,
             channel: spawnPolicy.channel,
             accountId: spawnPolicy.accountId,

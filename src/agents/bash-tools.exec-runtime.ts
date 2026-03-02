@@ -1,17 +1,17 @@
-import path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
+import path from "node:path";
 import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js";
+import type { ProcessSession } from "./bash-process-registry.js";
+import type { ExecToolDetails } from "./bash-tools.exec-types.js";
+import type { BashSandboxConfig } from "./bash-tools.shared.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { isDangerousHostEnvVarName } from "../infra/host-env-security.js";
 import { mergePathPrepend } from "../infra/path-prepend.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
-import type { ProcessSession } from "./bash-process-registry.js";
-import type { ExecToolDetails } from "./bash-tools.exec-types.js";
-import type { BashSandboxConfig } from "./bash-tools.shared.js";
 export { applyPathPrepend, normalizePathPrepend } from "../infra/path-prepend.js";
-import { logWarn } from "../logger.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
+import { logWarn } from "../logger.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
 import {
   addSession,
@@ -291,6 +291,10 @@ export async function runExecProcess(opts: {
   const sessionId = createSessionSlug();
   const execCommand = opts.execCommand ?? opts.command;
   const supervisor = getProcessSupervisor();
+  const shellRuntimeEnv: Record<string, string> = {
+    ...opts.env,
+    OPENCLAW_SHELL: "exec",
+  };
 
   const session: ProcessSession = {
     id: sessionId,
@@ -385,7 +389,7 @@ export async function runExecProcess(opts: {
             containerName: opts.sandbox.containerName,
             command: execCommand,
             workdir: opts.containerWorkdir ?? opts.sandbox.containerWorkdir,
-            env: opts.env,
+            env: shellRuntimeEnv,
             tty: opts.usePty,
           }),
         ],
@@ -400,14 +404,14 @@ export async function runExecProcess(opts: {
         mode: "pty" as const,
         ptyCommand: execCommand,
         childFallbackArgv: childArgv,
-        env: opts.env,
+        env: shellRuntimeEnv,
         stdinMode: "pipe-open" as const,
       };
     }
     return {
       mode: "child" as const,
       argv: childArgv,
-      env: opts.env,
+      env: shellRuntimeEnv,
       stdinMode: "pipe-closed" as const,
     };
   })();

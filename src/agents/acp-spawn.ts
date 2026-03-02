@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import type { AcpRuntimeSessionMode } from "../acp/runtime/types.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { getAcpSessionManager } from "../acp/control-plane/manager.js";
 import {
   cleanupFailedAcpSpawn,
@@ -9,7 +11,6 @@ import {
   resolveAcpSessionCwd,
   resolveAcpThreadSessionDetailLines,
 } from "../acp/runtime/session-identifiers.js";
-import type { AcpRuntimeSessionMode } from "../acp/runtime/types.js";
 import {
   resolveThreadBindingIntroText,
   resolveThreadBindingThreadName,
@@ -17,11 +18,11 @@ import {
 import {
   formatThreadBindingDisabledError,
   formatThreadBindingSpawnDisabledError,
-  resolveThreadBindingSessionTtlMsForChannel,
+  resolveThreadBindingIdleTimeoutMsForChannel,
+  resolveThreadBindingMaxAgeMsForChannel,
   resolveThreadBindingSpawnPolicy,
 } from "../channels/thread-bindings-policy.js";
 import { loadConfig } from "../config/config.js";
-import type { OpenClawConfig } from "../config/config.js";
 import { callGateway } from "../gateway/call.js";
 import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import {
@@ -329,7 +330,12 @@ export async function spawnAcpDirect(
           introText: resolveThreadBindingIntroText({
             agentId: targetAgentId,
             label: params.label || undefined,
-            sessionTtlMs: resolveThreadBindingSessionTtlMsForChannel({
+            idleTimeoutMs: resolveThreadBindingIdleTimeoutMsForChannel({
+              cfg,
+              channel: preparedBinding.channel,
+              accountId: preparedBinding.accountId,
+            }),
+            maxAgeMs: resolveThreadBindingMaxAgeMsForChannel({
               cfg,
               channel: preparedBinding.channel,
               accountId: preparedBinding.accountId,

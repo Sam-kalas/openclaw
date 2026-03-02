@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import fs from "node:fs";
 import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
@@ -291,6 +291,14 @@ export function handleControlUiHttpRequest(
       applyControlUiSecurityHeaders(res);
       respondNotFound(res);
       return true;
+    }
+    // Keep plugin-owned HTTP routes outside the root-mounted Control UI SPA
+    // fallback so untrusted plugins cannot claim arbitrary UI paths.
+    if (pathname === "/plugins" || pathname.startsWith("/plugins/")) {
+      return false;
+    }
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      return false;
     }
   }
 

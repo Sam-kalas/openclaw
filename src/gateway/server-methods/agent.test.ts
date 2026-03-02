@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import type { GatewayRequestContext } from "./types.js";
 import { BARE_SESSION_RESET_PROMPT } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentHandlers } from "./agent.js";
-import type { GatewayRequestContext } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
   loadSessionEntry: vi.fn(),
@@ -323,6 +323,60 @@ describe("gateway agent handler", () => {
 
     mocks.loadConfigReturn = {};
     vi.useRealTimers();
+  });
+
+  it("passes senderIsOwner=false for write-scoped gateway callers", async () => {
+    primeMainAgentRun();
+
+    await invokeAgent(
+      {
+        message: "owner-tools check",
+        sessionKey: "agent:main:main",
+        idempotencyKey: "test-sender-owner-write",
+      },
+      {
+        client: {
+          connect: {
+            role: "operator",
+            scopes: ["operator.write"],
+            client: { id: "test-client", mode: "gateway" },
+          },
+        } as unknown as AgentHandlerArgs["client"],
+      },
+    );
+
+    await vi.waitFor(() => expect(mocks.agentCommand).toHaveBeenCalled());
+    const callArgs = mocks.agentCommand.mock.calls.at(-1)?.[0] as
+      | { senderIsOwner?: boolean }
+      | undefined;
+    expect(callArgs?.senderIsOwner).toBe(false);
+  });
+
+  it("passes senderIsOwner=true for admin-scoped gateway callers", async () => {
+    primeMainAgentRun();
+
+    await invokeAgent(
+      {
+        message: "owner-tools check",
+        sessionKey: "agent:main:main",
+        idempotencyKey: "test-sender-owner-admin",
+      },
+      {
+        client: {
+          connect: {
+            role: "operator",
+            scopes: ["operator.admin"],
+            client: { id: "test-client", mode: "gateway" },
+          },
+        } as unknown as AgentHandlerArgs["client"],
+      },
+    );
+
+    await vi.waitFor(() => expect(mocks.agentCommand).toHaveBeenCalled());
+    const callArgs = mocks.agentCommand.mock.calls.at(-1)?.[0] as
+      | { senderIsOwner?: boolean }
+      | undefined;
+    expect(callArgs?.senderIsOwner).toBe(true);
   });
 
   it("respects explicit bestEffortDeliver=false for main session runs", async () => {

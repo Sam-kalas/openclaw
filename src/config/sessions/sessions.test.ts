@@ -3,6 +3,8 @@ import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { SessionConfig } from "../types.base.js";
+import type { SessionEntry } from "./types.js";
 import {
   clearSessionStoreCacheForTest,
   loadSessionStore,
@@ -10,15 +12,14 @@ import {
   resolveAndPersistSessionFile,
   updateSessionStore,
 } from "../sessions.js";
-import type { SessionConfig } from "../types.base.js";
 import {
   resolveSessionFilePath,
+  resolveSessionFilePathOptions,
   resolveSessionTranscriptPathInDir,
   validateSessionId,
 } from "./paths.js";
 import { resolveSessionResetPolicy } from "./reset.js";
 import { appendAssistantMessageToSessionTranscript } from "./transcript.js";
-import type { SessionEntry } from "./types.js";
 
 function useTempSessionsFixture(prefix: string) {
   let tempDir = "";
@@ -66,6 +67,13 @@ describe("session path safety", () => {
       { sessionsDir },
     );
     expect(resolved).toBe(path.resolve(sessionsDir, "sess-1.jsonl"));
+  });
+
+  it("ignores multi-store sentinel paths when deriving session file options", () => {
+    expect(resolveSessionFilePathOptions({ agentId: "worker", storePath: "(multiple)" })).toEqual({
+      agentId: "worker",
+    });
+    expect(resolveSessionFilePathOptions({ storePath: "(multiple)" })).toBeUndefined();
   });
 
   it("accepts symlink-alias session paths that resolve under the sessions dir", () => {

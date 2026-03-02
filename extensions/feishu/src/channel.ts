@@ -7,6 +7,7 @@ import {
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
 } from "openclaw/plugin-sdk";
+import type { ResolvedFeishuAccount, FeishuConfig } from "./types.js";
 import {
   resolveFeishuAccount,
   resolveFeishuCredentials,
@@ -25,7 +26,6 @@ import { resolveFeishuGroupToolPolicy } from "./policy.js";
 import { probeFeishu } from "./probe.js";
 import { sendMessageFeishu } from "./send.js";
 import { normalizeFeishuTarget, looksLikeFeishuId, formatFeishuTarget } from "./targets.js";
-import type { ResolvedFeishuAccount, FeishuConfig } from "./types.js";
 
 const meta: ChannelMeta = {
   id: "feishu",
@@ -79,6 +79,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
       additionalProperties: false,
       properties: {
         enabled: { type: "boolean" },
+        defaultAccount: { type: "string" },
         appId: { type: "string" },
         appSecret: { type: "string" },
         encryptKey: { type: "string" },
@@ -101,7 +102,12 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
           items: { oneOf: [{ type: "string" }, { type: "number" }] },
         },
         requireMention: { type: "boolean" },
+        groupSessionScope: {
+          type: "string",
+          enum: ["group", "group_sender", "group_topic", "group_topic_sender"],
+        },
         topicSessionMode: { type: "string", enum: ["disabled", "enabled"] },
+        replyInThread: { type: "string", enum: ["disabled", "enabled"] },
         historyLimit: { type: "integer", minimum: 0 },
         dmHistoryLimit: { type: "integer", minimum: 0 },
         textChunkLimit: { type: "integer", minimum: 1 },
