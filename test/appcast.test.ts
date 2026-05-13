@@ -4,17 +4,53 @@ import { canonicalSparkleBuildFromVersion } from "../scripts/sparkle-build.ts";
 
 const APPCAST_URL = new URL("../appcast.xml", import.meta.url);
 
+type AppcastItem = {
+  raw: string;
+  shortVersion: string | null;
+  sparkleVersion: number | null;
+};
+
+function parseItems(appcast: string): AppcastItem[] {
+  return [...appcast.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((match) => {
+    const raw = match[1] ?? "";
+    const shortVersion =
+      raw.match(/<sparkle:shortVersionString>([^<]+)<\/sparkle:shortVersionString>/)?.[1] ?? null;
+    const sparkleVersionText = raw.match(/<sparkle:version>([^<]+)<\/sparkle:version>/)?.[1] ?? "";
+    const sparkleVersion = Number.parseInt(sparkleVersionText, 10);
+    return {
+      raw,
+      shortVersion,
+      sparkleVersion: Number.isFinite(sparkleVersion) ? sparkleVersion : null,
+    };
+  });
+}
+
 describe("appcast.xml", () => {
-  it("uses the expected Sparkle version for 2026.3.1", () => {
+  it("keeps every appcast entry on the canonical sparkle build for its version", () => {
     const appcast = readFileSync(APPCAST_URL, "utf8");
-    const shortVersion = "2026.3.1";
-    const items = Array.from(appcast.matchAll(/<item>[\s\S]*?<\/item>/g)).map((match) => match[0]);
-    const matchingItem = items.find((item) =>
-      item.includes(`<sparkle:shortVersionString>${shortVersion}</sparkle:shortVersionString>`),
+    const items = parseItems(appcast);
+    expect(items.length).toBeGreaterThan(0);
+
+    for (const item of items) {
+      expect(item.shortVersion, item.raw).not.toBeNull();
+      expect(item.sparkleVersion, item.raw).not.toBeNull();
+      expect(item.sparkleVersion).toBe(canonicalSparkleBuildFromVersion(item.shortVersion!));
+    }
+  });
+
+  it("keeps the first stable appcast entry aligned with the newest stable build", () => {
+    const appcast = readFileSync(APPCAST_URL, "utf8");
+    const stableItems = parseItems(appcast).filter(
+      (item) => item.sparkleVersion !== null && item.sparkleVersion % 100 === 90,
     );
 
-    expect(matchingItem).toBeDefined();
-    const sparkleMatch = matchingItem?.match(/<sparkle:version>([^<]+)<\/sparkle:version>/);
-    expect(sparkleMatch?.[1]).toBe(String(canonicalSparkleBuildFromVersion(shortVersion)));
+    expect(stableItems.length).toBeGreaterThan(0);
+    const firstStable = stableItems[0];
+    const newestStable = [...stableItems].toSorted(
+      (left, right) => (right.sparkleVersion ?? 0) - (left.sparkleVersion ?? 0),
+    )[0];
+
+    expect(firstStable.sparkleVersion).toBe(newestStable.sparkleVersion);
+    expect(firstStable.shortVersion).toBe(newestStable.shortVersion);
   });
 });

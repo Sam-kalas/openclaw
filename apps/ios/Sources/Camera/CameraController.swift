@@ -1,16 +1,17 @@
 import AVFoundation
-import OpenClawKit
 import Foundation
+import OpenClawKit
+import os
 
 actor CameraController {
-    struct CameraDeviceInfo: Codable, Sendable {
+    struct CameraDeviceInfo: Codable {
         var id: String
         var name: String
         var position: String
         var deviceType: String
     }
 
-    enum CameraError: LocalizedError, Sendable {
+    enum CameraError: LocalizedError {
         case cameraUnavailable
         case microphoneUnavailable
         case permissionDenied(kind: String)
@@ -141,7 +142,7 @@ actor CameraController {
     }
 
     func listDevices() -> [CameraDeviceInfo] {
-        return Self.discoverVideoDevices().map { device in
+        Self.discoverVideoDevices().map { device in
             CameraDeviceInfo(
                 id: device.uniqueID,
                 name: device.localizedName,
@@ -151,7 +152,7 @@ actor CameraController {
     }
 
     private func ensureAccess(for mediaType: AVMediaType) async throws {
-        if !(await CameraAuthorization.isAuthorized(for: mediaType)) {
+        if await !(CameraAuthorization.isAuthorized(for: mediaType)) {
             throw CameraError.permissionDenied(kind: mediaType == .video ? "Camera" : "Microphone")
         }
     }
@@ -161,7 +162,7 @@ actor CameraController {
         deviceId: String?) -> AVCaptureDevice?
     {
         if let deviceId, !deviceId.isEmpty {
-            if let match = Self.discoverVideoDevices().first(where: { $0.uniqueID == deviceId }) {
+            if let match = discoverVideoDevices().first(where: { $0.uniqueID == deviceId }) {
                 return match
             }
         }
@@ -260,7 +261,7 @@ actor CameraController {
 
 private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
     private let continuation: CheckedContinuation<Data, Error>
-    private var didResume = false
+    private let resumed = OSAllocatedUnfairLock(initialState: false)
 
     init(_ continuation: CheckedContinuation<Data, Error>) {
         self.continuation = continuation
@@ -269,10 +270,14 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
     func photoOutput(
         _ output: AVCapturePhotoOutput,
         didFinishProcessingPhoto photo: AVCapturePhoto,
-        error: Error?
-    ) {
-        guard !self.didResume else { return }
-        self.didResume = true
+        error: Error?)
+    {
+        let alreadyResumed = self.resumed.withLock { old in
+            let was = old
+            old = true
+            return was
+        }
+        guard !alreadyResumed else { return }
 
         if let error {
             self.continuation.resume(throwing: error)
@@ -298,18 +303,22 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
     func photoOutput(
         _ output: AVCapturePhotoOutput,
         didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
-        error: Error?
-    ) {
+        error: Error?)
+    {
         guard let error else { return }
-        guard !self.didResume else { return }
-        self.didResume = true
+        let alreadyResumed = self.resumed.withLock { old in
+            let was = old
+            old = true
+            return was
+        }
+        guard !alreadyResumed else { return }
         self.continuation.resume(throwing: error)
     }
 }
 
 private final class MovieFileDelegate: NSObject, AVCaptureFileOutputRecordingDelegate {
     private let continuation: CheckedContinuation<URL, Error>
-    private var didResume = false
+    private let resumed = OSAllocatedUnfairLock(initialState: false)
 
     init(_ continuation: CheckedContinuation<URL, Error>) {
         self.continuation = continuation
@@ -321,8 +330,12 @@ private final class MovieFileDelegate: NSObject, AVCaptureFileOutputRecordingDel
         from connections: [AVCaptureConnection],
         error: Error?)
     {
-        guard !self.didResume else { return }
-        self.didResume = true
+        let alreadyResumed = self.resumed.withLock { old in
+            let was = old
+            old = true
+            return was
+        }
+        guard !alreadyResumed else { return }
 
         if let error {
             let ns = error as NSError
